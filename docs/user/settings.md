@@ -101,8 +101,7 @@ remembers. It works with the keys and with the mouse alike.
 /settings runtimes
 ```
 
-![/settings opening on its six pages, then into Workspace: default flow, profiling and
-forget](/demo/profiling.gif)
+<HmzCast name="profiling" alt="/settings opening on its six pages, then into Workspace: default flow, profiling and forget" />
 
 ## How it works
 
@@ -503,8 +502,7 @@ by, and the names of the variables it sets. It never shows a value. Under the li
 **Add an account**, **Add a custom CLI** (one that [speaks
 ACP](/reference/agents#a-cli-of-your-own)), **Search…** and **Save**.
 
-![the Accounts page of /settings listing a claude account and as local, enter opening what can
-be done with the account](/demo/accounts.gif)
+<HmzCast name="accounts" alt="the Accounts page of /settings listing a claude account and as local, enter opening what can be done with the account" />
 
 <kbd>enter</kbd> on an account opens what you can do with it:
 
@@ -883,9 +881,7 @@ Type `/settings runtimes`:
   <kbd>enter</kbd>, and <kbd>enter</kbd> on `done`. From an empty page that is ten key presses
   and what you typed.
 
-![the Runtimes page of /settings: ssh hosts and a docker daemon under a heading each,
-enter opening what can be done to one, then the form a docker daemon is added
-on](/demo/runtimes.gif)
+<HmzCast name="runtimes" alt="the Runtimes page of /settings: ssh hosts and a docker daemon under a heading each, enter opening what can be done to one, then the form a docker daemon is added on" />
 
 Everything on this page happens as you ask, so it has no **Save**. What you add or correct
 is asked what it has as it lands, in the background, and the line under the list says what it
@@ -1035,8 +1031,7 @@ flowverse you have added. Type `/settings flowverses`, or choose `manage flowver
 the flows of `/flow`, which opens this page alone: <kbd>esc</kbd> there goes back to the
 flows.
 
-![the Flowverses page of /settings: every place flows come from, then enter on one to read what
-it holds](/demo/flowverses.gif)
+<HmzCast name="flowverses" alt="the Flowverses page of /settings: every place flows come from, then enter on one to read what it holds" />
 
 | Row | What it does |
 | --- | --- |

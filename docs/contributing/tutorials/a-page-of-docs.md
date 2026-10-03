@@ -76,7 +76,7 @@ Save it as `docs/user/my-thing.md`. As you write:
 - Lead with doing. The first screen tells the reader what they will get.
 - Run every example, and paste what it really printed.
 - Link from the site root without the extension: `/user/afk`. Name assets in `public/` from
-  the root: `/demo/tui.gif`.
+  the root: `/demo/run.png`. A terminal demo is `<HmzCast name="tui" alt="…" />`.
 - Show something beyond prose: a code group, a table, a highlighted line, a demo.
 - Wrap prose at 95 columns.
 

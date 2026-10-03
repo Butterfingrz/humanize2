@@ -10,6 +10,7 @@ import HmzAccounts from './components/HmzAccounts.vue'
 import HmzAnchor from './components/HmzAnchor.vue'
 import HmzArch from './components/HmzArch.vue'
 import HmzBackends from './components/HmzBackends.vue'
+import HmzCast from './components/HmzCast.vue'
 import HmzDaemon from './components/HmzDaemon.vue'
 import HmzFeatures from './components/HmzFeatures.vue'
 import HmzFlow from './components/flow/FlowPlayer.vue'
@@ -39,6 +40,7 @@ export default {
     app.component('HmzAnchor', HmzAnchor)
     app.component('HmzArch', HmzArch)
     app.component('HmzBackends', HmzBackends)
+    app.component('HmzCast', HmzCast)
     app.component('HmzDaemon', HmzDaemon)
     app.component('HmzFeatures', HmzFeatures)
     app.component('HmzFlow', HmzFlow)

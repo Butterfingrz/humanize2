@@ -46,9 +46,7 @@ past the newest line and it comes back.
 At an empty prompt, press <kbd>↑</kbd>. Edit what comes back if you like, and press
 <kbd>enter</kbd>.
 
-![hmz: three commands sent; then, with "fix the flaky" half typed, up brings back
-/afk off, /clear and /afk on in turn, and down walks forward again until "fix the
-flaky" is back at the prompt](/demo/history.gif)
+<HmzCast name="history" alt="hmz: three commands sent; then, with &quot;fix the flaky&quot; half typed, up brings back /afk off, /clear and /afk on in turn, and down walks forward again until &quot;fix the flaky&quot; is back at the prompt" />
 
 ## How it works
 

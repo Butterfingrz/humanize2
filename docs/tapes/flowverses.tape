@@ -7,8 +7,6 @@
 # humanize's repository of the rest; asking what one holds reads the flows already on this
 # container's disk, and no turn is taken.
 
-Output "/out/flowverses.gif"
-
 Set Shell "bash"
 Set FontSize 15
 Set Width 1000

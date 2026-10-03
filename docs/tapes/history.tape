@@ -4,8 +4,6 @@
 # The lines sent are commands that change what is shown and nothing else. No flow starts and
 # no turn is taken: the backends here are stand-ins that run nothing.
 
-Output "/out/history.gif"
-
 Set Shell "bash"
 Set FontSize 15
 Set Width 1000

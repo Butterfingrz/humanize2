@@ -94,13 +94,12 @@ straight away.
 
 <kbd>ctrl+c</kbd> twice stops the flow, `/` lists every command, and `/exit` leaves.
 
-<figure class="hmz-shot">
-  <img :src="withBase('/demo/tui.gif')" alt="hmz opens, / lists its commands, and /flow opens a flow's menu" loading="lazy" />
-  <figcaption>
-    <code>/</code> lists the commands and <code>/flow</code> opens a flow's menu. Recorded with
-    stand-in CLIs, so no agent takes a turn.
-  </figcaption>
-</figure>
+<HmzCast name="tui" alt="hmz opens, / lists its commands, and /flow opens a flow's menu" />
+
+<p class="hmz-cast-caption">
+  <code>/</code> lists the commands and <code>/flow</code> opens a flow's menu. Recorded with
+  stand-in CLIs, so no agent takes a turn.
+</p>
 
 </template>
 <template #exec>

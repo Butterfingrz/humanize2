@@ -1,16 +1,30 @@
 # The terminal demos
 
-The GIFs and stills under `docs/public/demo/` are rendered from the `.tape` scripts here by
-[VHS](https://github.com/charmbracelet/vhs), inside a container built by the `Dockerfile`
-beside them. A tape may `Screenshot` a moment worth its own still as well as writing its GIF.
+The demos in the docs are not pictures. Each one is the text a terminal was sent, with the
+moment each piece of it came, kept as an [asciicast](https://docs.asciinema.org/manual/asciicast/v2/)
+under `docs/public/demo/<name>.cast` and drawn by `<HmzCast>` in the reader's browser: the
+words stay sharp at any zoom and can be selected, and a page fetches a few kilobytes of text
+rather than a GIF.
+
+The casts are recorded from the `.tape` scripts here. A tape is written in
+[VHS](https://github.com/charmbracelet/vhs)'s language; `cast.py` plays it into `bash` on a
+pseudo-terminal, inside a container built by the `Dockerfile` beside them, and writes down what
+came back while the tape was showing.
 
 ```sh
 ./render.sh                 # every tape
 ./render.sh tui.tape        # one of them
 ```
 
-Needs `docker` and nothing else. The first run builds the image; after that a tape takes a few
-seconds. The GIFs are **committed**; nothing in CI renders them.
+Needs Apple's [`container`](https://github.com/apple/container) and nothing else
+(`CONTAINER=docker ./render.sh` uses Docker instead). The first run builds the image; after that
+a tape takes as long as it plays. The casts are **committed**; nothing in CI records them.
+
+A page shows one with:
+
+```md
+<HmzCast name="tui" alt="what happens on it, for anyone who cannot watch" />
+```
 
 ## A demo must not record anything private
 
@@ -32,12 +46,11 @@ That is why this is a container rather than a script you run on your own machine
 Copy the nearest existing tape and keep its opening:
 
 ```
-Output "/out/my-demo.gif"
-
 Set Shell "bash"
+Set FontSize 15
 Set Width 1000
 Set Height 560
-Set Framerate 10
+Set Padding 12
 Set TypingSpeed 40ms
 
 Hide
@@ -45,36 +58,29 @@ Type "cd /work/demo && clear" Enter
 Show
 ```
 
-Then render it and look at every frame before you commit it:
+`Width`, `Height`, `FontSize` and `Padding` give the terminal its columns and rows, as VHS would
+fit them. Then record it and play it on its page, under `pnpm dev`, before you commit it. A demo
+shows humanize and nothing about the machine it was recorded on.
 
-```sh
-./render.sh my-demo.tape
-docker run --rm -v "$PWD/../public/demo:/out" -v /tmp/frames:/frames \
-    --entrypoint ffmpeg humanize-vhs \
-    -i /out/my-demo.gif -vf 'select=not(mod(n\,20))' -vsync 0 /frames/my-demo_%02d.png
-```
-
-A demo shows humanize and nothing about the machine it was recorded on.
+`cast.py` understands what the tapes here use -- `Type`, the keys, `Ctrl+`, `Sleep`,
+`Wait+Screen`, `Hide`, `Show` and `Set` -- and stops on anything else rather than guess.
+What a `Hide` does goes on the recording as the screen it left behind, in one go.
 
 ## The pieces
 
 | | |
 | --- | --- |
-| `Dockerfile` | VHS, humanize built out of this checkout, and the stand-ins |
-| `Dockerfile.dockerignore` | so the build context is a few files rather than the tree |
+| `Dockerfile` | humanize built out of this checkout, the stand-ins, and what `cast.py` needs |
+| `cast.py` | plays a tape into a terminal and writes the cast |
 | `stage.py` | builds the throwaway world, at image build time |
 | `standin/` | the coding agent CLIs that are not coding agent CLIs |
-| `render.sh` | builds the image, runs the tapes, and fails on a GIF over 450 KB |
+| `render.sh` | builds the image, records the tapes, and fails on a cast over 450 KB |
 | `*.tape` | one demo each |
 
-## Keeping them small
+The PNG stills beside the casts were taken by VHS at each tape's `Screenshot` lines, which
+`cast.py` passes over. A still is retaken with VHS by hand, from the same tape.
 
-`check-added-large-files` refuses anything over 500 KB, and `render.sh` fails on anything over
-450 KB. The clock is not bounded; the file is. What the current tapes are written against:
+## Keeping them short
 
-- `Set Width 1000`, `Set Height` between 500 and 620;
-- `Set Framerate` between 10 and 20, the slower for a tape that is mostly a menu being read,
-  and `Set TypingSpeed` between 25ms and 50ms;
-- 8 to 20 seconds end to end.
-
-A tape that has grown too large usually has too much `Sleep` in it.
+8 to 20 seconds end to end. Idle stretches over 2 seconds are cut to 2 when a cast plays, but a
+tape that runs long usually has too much `Sleep` in it.

@@ -4,8 +4,6 @@
 # often an account several others could be run as. The key typed here is the words
 # `not-a-real-key`, the way in is one that runs nothing, and nothing signs in to anything.
 
-Output "/out/alike.gif"
-
 Set Shell "bash"
 Set FontSize 15
 Set Width 1000

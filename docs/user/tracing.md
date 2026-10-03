@@ -19,8 +19,7 @@ end of this page you will have found a run, exported its trace and read it.
 4. Open [ui.perfetto.dev](https://ui.perfetto.dev) and drop in `traces/export.trace.json` from
    the archive. Nothing is uploaded: Perfetto reads the file in your browser.
 
-![/epics listing two runs, going into the newest, and exporting it: the archive's path, its
-size, and 1 session, 10 slices, 3 programs](/demo/epics.gif)
+<HmzCast name="epics" alt="/epics listing two runs, going into the newest, and exporting it: the archive's path, its size, and 1 session, 10 slices, 3 programs" />
 
 ## Before you start
 

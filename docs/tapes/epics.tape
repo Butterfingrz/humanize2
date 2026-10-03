@@ -4,8 +4,6 @@
 # be picked up. Exporting reads only what is already on this container's disk, gathering the
 # run's trace on its way in, and no turn is taken: the stand-in backends run nothing.
 
-Output "/out/epics.gif"
-
 Set Shell "bash"
 Set FontSize 15
 Set Width 1000

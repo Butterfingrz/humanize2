@@ -89,9 +89,7 @@ you. Start somewhere you can throw away, and read [Security](/user/security) bef
 flow at work you care about.
 :::
 
-![The flow menu: a project flow is chosen, its one agent is set to another model and effort,
-a budget of 20 minutes is set, and the menu is saved. The task is then typed at the
-prompt.](/demo/first-run.gif)
+<HmzCast name="first-run" alt="The flow menu: a project flow is chosen, its one agent is set to another model and effort, a budget of 20 minutes is set, and the menu is saved. The task is then typed at the prompt." />
 
 <p class="u7-caption">The same steps, recorded with stand-in CLIs on a project's own flow,
 <code>local/twice</code>.</p>

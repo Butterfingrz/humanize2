@@ -3,8 +3,6 @@
 # No turn is taken. The backends here are stand-ins that run nothing, and the tape leaves
 # before anything could be said to one.
 
-Output "/out/tui.gif"
-
 Set Shell "bash"
 Set FontSize 15
 Set Width 1000

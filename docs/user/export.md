@@ -13,9 +13,7 @@ timeline of the run and what each CLI was, with every credential struck out.
 
 Open `/epics`, press <kbd>enter</kbd> on the run, then choose **export run**.
 
-![/epics listing the runs of this directory, newest first; enter on one shows where it is
-written down and offers to resume it or export it; export it reports where the archive
-landed, how big it is, and what the trace inside it holds](/demo/epics.gif)
+<HmzCast name="epics" alt="/epics listing the runs of this directory, newest first; enter on one shows where it is written down and offers to resume it or export it; export it reports where the archive landed, how big it is, and what the trace inside it holds" />
 
 When it is done, the line under the list, and the transcript, say where it went:
 

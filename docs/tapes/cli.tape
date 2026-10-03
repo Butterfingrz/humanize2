@@ -1,7 +1,5 @@
 # `hmz` on a command line: the version, and the commands there are.
 
-Output "/out/cli.gif"
-
 Set Shell "bash"
 Set FontSize 16
 Set Width 1000

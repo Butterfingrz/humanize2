@@ -264,8 +264,7 @@ See [Skills](/user/skills) for what goes in `skills/`.
 The Flowverses page of `/settings` (type `/settings flowverses`), or the `manage flowverses`
 row in `/flow`, lists every place flows come from:
 
-![the Flowverses page of /settings: every place flows come from, then enter on one to read
-what it holds](/demo/flowverses.gif)
+<HmzCast name="flowverses" alt="the Flowverses page of /settings: every place flows come from, then enter on one to read what it holds" />
 
 | Row | Does |
 | --- | --- |

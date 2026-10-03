@@ -3,8 +3,6 @@
 # Nothing runs: the switch is written down, and what it does is done by the next flow that
 # runs here. The programs in the trace beside it were invented by stage.py.
 
-Output "/out/profiling.gif"
-
 Set Shell "bash"
 Set FontSize 15
 Set Width 1000

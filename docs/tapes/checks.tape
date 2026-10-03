@@ -2,8 +2,6 @@
 #
 # No agent runs in this tape. Each line below is refused by `hmz exec` itself.
 
-Output "/out/checks.gif"
-
 Set Shell "bash"
 Set FontSize 16
 Set Width 1000

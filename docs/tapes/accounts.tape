@@ -3,8 +3,6 @@
 # The account this walks over was made by `stage.py` at a reserved-invalid endpoint with the
 # words `not-a-real-token`. Nothing here signs in to anything, and no value is ever drawn.
 
-Output "/out/accounts.gif"
-
 Set Shell "bash"
 Set FontSize 15
 Set Width 1000

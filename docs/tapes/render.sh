@@ -1,28 +1,38 @@
 #!/bin/sh
-# Renders the documentation's terminal demos.
+# Records the documentation's terminal demos.
 #
-#   docs/tapes/render.sh              every tape
-#   docs/tapes/render.sh tui.tape     one of them
+#   docs/tapes/render.sh                     every tape
+#   docs/tapes/render.sh tui.tape            one of them
 #
-# Needs docker and nothing else. Each tape is recorded inside a container built from the
-# Dockerfile beside this script -- a scratch home, a throwaway project, and a stand-in for
-# the coding agent CLIs -- so a recording cannot pick up an account, a path or a hostname.
+# Needs Apple's `container` (or `docker`, if CONTAINER=docker) and nothing else. Each tape is
+# played inside a container built from the Dockerfile beside this script -- a scratch home, a
+# throwaway project, and a stand-in for the coding agent CLIs -- so a recording cannot pick up
+# an account, a path or a hostname.
 #
-# The GIFs land in docs/public/demo/ and are committed. Nothing in CI runs this.
+# A tape becomes docs/public/demo/<name>.cast, text the page plays in the reader's browser.
+# The casts are committed. Nothing in CI runs this.
 
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(CDPATH= cd -- "$here/../.." && pwd)
 out="$root/docs/public/demo"
-image=humanize-vhs
+image=humanize-tapes
+run=${CONTAINER:-container}
 
-# `check-added-large-files` refuses anything over 500 KB, and a page nobody waits for is a
-# page nobody reads. This is the smaller promise the tapes are written against.
+# A cast is text and is served compressed, but it is still fetched before it plays.
 limit=460800
 
+# The build is handed only what the Dockerfile copies, so it neither reads the whole tree nor
+# leans on an ignore file every builder reads its own way.
+context=$(mktemp -d)
+trap 'rm -rf "$context"' EXIT
+cp -R "$root/pyproject.toml" "$root/README.md" "$root/LICENSE" "$root/src" \
+    "$here/stage.py" "$here/standin" "$context/"
+find "$context/src" -name __pycache__ -prune -exec rm -rf {} +
+
 echo "==> building $image"
-DOCKER_BUILDKIT=1 docker build --quiet -t "$image" -f "$here/Dockerfile" "$root" >/dev/null
+"$run" build --quiet -t "$image" -f "$here/Dockerfile" "$context" >/dev/null
 
 mkdir -p "$out"
 
@@ -32,33 +42,25 @@ else
     tapes=$(cd "$here" && echo ./*.tape)
 fi
 
-for tape in $tapes; do
-    name=$(basename "$tape")
-    echo "==> $name"
-    docker run --rm \
-        -v "$here:/tapes:ro" \
-        -v "$out:/out" \
-        "$image" "/tapes/$name"
-done
-
-# The container writes as root. Hand what it wrote back, so the tree is not half root's.
-docker run --rm -v "$out:/out" --entrypoint chown "$image" \
-    -R "$(id -u):$(id -g)" /out
-
-echo
 failed=0
-for gif in "$out"/*.gif; do
-    [ -e "$gif" ] || continue
-    size=$(wc -c < "$gif")
-    printf '%-28s %6s KB\n' "$(basename "$gif")" "$((size / 1024))"
+for tape in $tapes; do
+    name=$(basename "$tape" .tape)
+    echo "==> $name"
+    "$run" run --rm \
+        -v "$here:/tapes" \
+        -v "$out:/out" \
+        --entrypoint /opt/cast/bin/python \
+        "$image" /tapes/cast.py "/tapes/$name.tape" "/out/$name.cast"
+    size=$(wc -c < "$out/$name.cast")
+    printf '    %s KB\n' "$((size / 1024))"
     if [ "$size" -gt "$limit" ]; then
-        echo "    too large: shorten the tape, or drop Width/Height/Framerate" >&2
+        echo "    too large: shorten the tape" >&2
         failed=1
     fi
 done
 
 echo
-echo "Look at what you rendered before committing it. A demo must show humanize and"
-echo "nothing about the machine it was recorded on."
+echo "Play what you recorded before committing it (pnpm dev, then the page it is on). A demo"
+echo "must show humanize and nothing about the machine it was recorded on."
 
 exit "$failed"

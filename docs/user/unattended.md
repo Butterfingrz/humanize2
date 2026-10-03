@@ -225,8 +225,7 @@ viewer that renders it.
 role or budget, an effort off the CLI's ladder, a flow that isn't there. Each is refused in a
 second, with exit status 2, before any agent starts. So try the line by hand once:
 
-![hmz exec refusing a run with no budget, a flow whose role was left unfilled, and a flow
-that is not there](/demo/checks.gif)
+<HmzCast name="checks" alt="hmz exec refusing a run with no budget, a flow whose role was left unfilled, and a flow that is not there" />
 
 ```console
 $ hmz exec -f ralph_loop -a agent=claude/claude-haiku-4-5-20251001:low "x"

@@ -572,30 +572,15 @@ html:not(.dark) .hmz-term .vp-code span {
   color: #f87171;
 }
 
-/* A recording of the terminal, with a line under it saying what it shows:
+/* A line under a terminal demo saying what it shows:
 
-     <figure class="hmz-shot">
-       <img :src="withBase('/demo/tui.gif')" alt="…" />
-       <figcaption>…</figcaption>
-     </figure>
+     <HmzCast name="tui" alt="…" />
+
+     <p class="hmz-cast-caption">…</p>
 */
-.vp-doc .hmz-shot {
-  margin: 20px 0 24px;
-}
-
-.vp-doc .hmz-shot img {
-  display: block;
-  width: 100%;
+.vp-doc .hmz-cast-caption {
   max-width: 760px;
-  height: auto;
-  border: 1px solid var(--hmz-panel-border);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-}
-
-.vp-doc .hmz-shot figcaption {
-  max-width: 760px;
-  margin-top: 8px;
+  margin-top: -16px;
   color: var(--vp-c-text-3);
   font-size: 13px;
   line-height: 1.55;

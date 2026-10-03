@@ -6,8 +6,6 @@
 # as fetched out of frame: it then offers the flow in the package and nothing else, nothing
 # is fetched, and the flow set up is the project's own `twice`.
 
-Output "/out/first-run.gif"
-
 Set Shell "bash"
 Set FontSize 15
 Set Width 1000

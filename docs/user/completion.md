@@ -23,9 +23,7 @@ with <kbd>tab</kbd> and keep typing.
 ❯ $ra       then tab: $ralph_loop
 ```
 
-![hmz: typing / lists every command that works now with what it takes; /s narrows it to
-/settings; tab takes it; /afk shows what it takes; $ lists the flows, $lo narrows them to
-the project's own, and tab finishes the name](/demo/completion.gif)
+<HmzCast name="completion" alt="hmz: typing / lists every command that works now with what it takes; /s narrows it to /settings; tab takes it; /afk shows what it takes; $ lists the flows, $lo narrows them to the project's own, and tab finishes the name" />
 
 ## How it works
 

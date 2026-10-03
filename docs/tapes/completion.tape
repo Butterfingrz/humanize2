@@ -3,8 +3,6 @@
 # Nothing is sent. Every line is finished and then cleared with ctrl+c, so no flow starts
 # and no turn is taken: the backends here are stand-ins that run nothing.
 
-Output "/out/completion.gif"
-
 Set Shell "bash"
 Set FontSize 15
 Set Width 1000

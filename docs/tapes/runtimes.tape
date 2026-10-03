@@ -5,8 +5,6 @@
 # nothing here reaches any of them: a machine is only asked what it has when it is added,
 # corrected or checked, and this tape does none of those.
 
-Output "/out/runtimes.gif"
-
 Set Shell "bash"
 Set FontSize 15
 Set Width 1000

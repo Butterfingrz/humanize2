@@ -3,8 +3,6 @@
 # The runs were invented by stage.py, sessions and all -- written down by the code that
 # writes down a real one. Nothing here starts a backend.
 
-Output "/out/run.gif"
-
 Set Shell "bash"
 Set FontSize 15
 Set Width 1000
