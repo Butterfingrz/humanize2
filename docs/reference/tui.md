@@ -240,7 +240,7 @@ Each command's line in the completion list:
 
 | Command | About | Instead, when |
 | --- | --- | --- |
-| `/flow` | `Choose, set up and install flows` | `Set up the running flow's agents` — a run is going |
+| `/flow` | `Switch flow` | `Set up the running flow's agents` — a run is going |
 | `/btw` | `Ask side questions; press esc or /btw to stop` | `Ask one more; alone, leave btw mode (esc too)` — btw on |
 | `/epics` | `View and manage runs in this directory` | |
 | `/resume` | `Resume the last run in this directory` | |
@@ -374,20 +374,22 @@ The second line only where a daemon holds the run.
 
 ```text
 dollar-line = "$" , name , ( ws , task )? ;
-name        = segment , { "/" , segment } , [ ":" , ( word-char | "." | "-" )+ ] ;
-segment     = letter , { word-char | "." | "-" } ;
+name        = ( "@" , part , "/" )? , part , ( "/" , part )? , ( ":" , part )? ;
+part        = ( word-char | "." | "-" )+ ;
 ```
 
-Regex: `[A-Za-z][\w.-]*(?:/[A-Za-z][\w.-]*)*(?::[\w.-]+)?` at `line[1:]`, followed by
-whitespace (a newline included) or the end. The task is the rest, stripped. A line not
-matching (`$ ls`, `$5`, `$(pwd)`, `$`) is an ordinary line. Paths are not names: use
-`/flow ./path`.
+Without `@`, the name starts with a letter, or with a GitHub user that starts with a figure
+and is followed by `/` and a letter. Regex:
+`(?:@[\w.-]+/|(?=[A-Za-z]|[0-9][\w-]*/[A-Za-z]))[\w.-]+(?:/[\w.-]+)?(?::[\w.-]+)?` at
+`line[1:]`, followed by whitespace (a newline included) or the end. The task is the rest,
+stripped. A line not matching (`$ ls`, `$5`, `$10/20`, `$(pwd)`, `$`) is an ordinary line.
+Paths are not names: use `/flow ./path`.
 
 | Condition | Result |
 | --- | --- |
 | btw on | Asked as a side question. |
 | a question is answerable here (aggregate, monitor, or the asking outworlder's view) | Taken as the answer. |
-| `<name>` not among the offered flows | `hmz: no such flow: <name>` |
+| `<name>` not among the offered flows | `hmz: no such flow: <name>`, and for a name said as before the `@` (`local/x`) ` -- a flow of local is called @local/x now` |
 | a run going | `hmz: cannot choose a flow while one is running` |
 | the flow is [set up](#set-up) | Chosen; with a task, the run starts. Without a task, `enter a task to start the flow`. |
 | not set up | `/flow` opens inside it, holding the task; the run starts when the menu is saved. Leaving without saving: `flow not set up; nothing started` (dim). |
@@ -789,8 +791,9 @@ top, `esc` leaves, and params are not asked.
 | `budget` | `set ▸` or `none ▸`; under it `what a run may spend: <summary>` | [budget sheet](#what-a-run-of-it-may-spend) |
 | <span id="profiling-row"></span>`profiling` (straight under `budget`) | a switch, `● on ▾` or `○ off ▾`: the flow's remembered value, else off; under it `samples the programs agents start` or `traced only` | nothing: `enter` drops `on` and `off` (see dropdown); a run started is [profiled](/reference/tracing#profiling-a-run) where it is on |
 
-Button: **Save** (`save the flow and its roles`), which applies flow, roles, params, budget and
-profiling together. Keys `enter open` (`enter choose` on `profiling`) `  tab actions   esc <back|close>`. Roles filled by the runtime
+Buttons: **Update**, **Uninstall** and **Copy here**, as on [Installed](#flow-list) for this
+flow (not when the page is opened on it alone); then **Save** (`run this flow, set up as it is
+here`), which applies flow, roles, params, budget and profiling together. Keys `enter open` (`enter choose` on `profiling`) `  tab actions   esc <back|close>`. Roles filled by the runtime
 (`Outworlder`, `LocalEnv`) are not rows. Messages:
 `<flow> has no roles to configure; it interacts only with you`, `<flow> failed to load: <e>;
 nothing can be configured`.
@@ -803,8 +806,10 @@ nothing can be configured`.
 ### Flowverses page {#where-flows-come-from}
 
 One card per flowverse with a URL (`official`, then added ones alphabetically; `local` and
-`user` are not indexes): its name; at the far end `fetched`, `not fetched` or `edited` (tracked
-files changed in the clone); under it the URL with credentials removed, `<n> flow(s)` listed,
+`user` are not indexes), and one per directory under the flowverses home that is not a clone,
+so that it can be removed: its name; at the far end `fetched`, `not fetched`, `edited` (tracked
+files changed in the clone) or `no git origin`; under it the URL with credentials removed
+(`a directory with no git origin` for one with none), `<n> flow(s)` listed,
 `<n> installed`, `↑ <n> update(s)`. Search: name and URL. Same store as
 [`Hmz().verses`](/reference/sdk#flowverses).
 
@@ -1107,6 +1112,7 @@ are used; the budget counts from zero.
 | `no flow has been run here, so there is nothing to resume` | no run here |
 | `no run here was of a flow that can be resumed, so there is nothing to resume` | the scan found none |
 | `<epic> cannot be read, so there is nothing to resume` | unreadable record |
+| `<run> cannot be resumed: <why>` | the flow will not load, `<why>` as the flow API says it (for a run of `local/x`, from before flows were named after an `@`: `local/x: a flow of local is called @local/x now`) |
 | `<flow> does not support resuming, so <run> cannot be resumed` | the flow is not resumable now |
 | `<run> has no saved state to resume: enter a task to start the flow from the beginning` | no journal entry |
 | `cannot resume a run while a flow is running: press ctrl+c twice to stop it first` | a run going |
@@ -1399,7 +1405,7 @@ description. Keys: `enter choose   tab actions   esc back`.
 | Row or button | Description | Effect |
 | --- | --- | --- |
 | `edit` | `edit saved settings` | Its form, without `name`; checked after saving (`<backend>/<name> updated`). |
-| `check` | ssh: `check host resources: home directory, CPUs, memory, and GPUs`; docker: `check daemon resources against its limits`; swarm: `check the swarm's nodes against its quota` | 30 s timeout: `checking <backend>/<name>…`, then `<backend>/<name> answers: …` -- for a swarm `answers: swarm <version>; <n> nodes: <a>, <b>, … and <k> more; <cpus> CPUs, <mem> all told`, naming the first 8 of the nodes that may take a task; for a docker daemon whose listed GPUs do not all answer, a yellow `<n> of <m> GPUs answer; GPU <ids> does not` / `do not`; a yellow `lacks configured resources: …`, or red `… could not be reached: …` / `… could not be checked: …`. |
+| `check` | ssh: `check host resources: home directory, CPUs, memory, and GPUs`; docker: `check daemon resources against its limits`; swarm: `check the swarm's nodes against its quota`; apple-container: `check this Mac's resources against its limits` | 30 s timeout: `checking <backend>/<name>…`, then `<backend>/<name> answers: …` -- for a swarm `answers: swarm <version>; <n> nodes: <a>, <b>, … and <k> more; <cpus> CPUs, <mem> all told`, naming the first 8 of the nodes that may take a task; for Apple containers `answers: container <version>; <cpus> CPUs, <mem>`; for a docker daemon whose listed GPUs do not all answer, a yellow `<n> of <m> GPUs answer; GPU <ids> does not` / `do not`; a yellow `lacks configured resources: …`, or red `… could not be reached: …` / `… could not be checked: …`. |
 | **Remove** (red) | `remove this host immediately` | At once: `<backend>/<name> removed`; yellow `<names> reached docker through this host; edit them`, and `<names> reached a swarm through this host; edit them` for a swarm whose endpoint or one of whose nodes it was. |
 
 #### ssh host form {#ssh-form}
@@ -1420,7 +1426,7 @@ never read.`
 | `options` | `additional ssh options: KEYWORD=VALUE, …` |
 | `workdir` | `default working directory when -e specifies none: /abs or ~/path` |
 | `falls back to` | `runtimes to try in order if this one cannot: docker:box, ssh:gpu2`. Entries apart by commas, saved as the runtime's [`fallback`](/reference/machines#falling-back); its row then ends `· falls back to <entries>`. |
-| `harness runs on` | `where an agent's harness runs, in order, the next only when one has no room: self, local, ssh:<name>, docker:<name>, swarm:<name>; blank for self where the CLI is there, else local`. The runtime's [`affinity`](/reference/remote-execution#affinity), entries apart by commas. |
+| `harness runs on` | `where an agent's harness runs, in order, the next only when one has no room: self, local, ssh:<name>, docker:<name>, swarm:<name>, apple-container:<name>; blank for self where the CLI is there, else local`. The runtime's [`affinity`](/reference/remote-execution#affinity), entries apart by commas. |
 
 Button: **Done**, `adds ssh/<name>, and checks its resources` / `updates …`.
 
@@ -1501,10 +1507,11 @@ machine of its own. Flows running on it are limited to the resources configured 
 The [docker host form](#docker-form)'s rows less `endpoint`, `OCI runtime` and `gpus`: `name`
 (add; `local` unless taken), `harness runs on`, `image`, `run args` (`extra arguments for
 container run`), `max containers`, `workdir`, `falls back to`, `cpus` (`max CPUs; blank to use
-all of this Mac's`), `memory` (`e.g. 16G; blank to use all of this Mac's`), `detect` (`detect
-this Mac's resources and fill them in`: `detecting resources on this Mac…`, then `detected …:
-auto-filled` with the cursor on `cpus`, or red `Apple's container did not respond: …`),
-`done` (`adds apple-container/<name> and detects host resources`). Refusals: `a host for
+all of this Mac's`), `memory` (`e.g. 16G; blank to use all of this Mac's`). Buttons:
+**Detect** (`detect this Mac's resources and fill them in`: `detecting resources on this Mac…`,
+then `detected …: auto-filled` with the focus back on the list and the cursor on `cpus`, or red
+`Apple's container did not respond: …`), then **Done** (`adds apple-container/<name> and
+detects host resources`). Refusals: `a host for
 Apple containers named <name> already exists; …`, and the docker host form's for memory,
 CPUs, max containers and run args.
 
@@ -1699,8 +1706,8 @@ run: `This environment is not in the run.`
 
 | Row | Value |
 | --- | --- |
-| `kind` | `LOCAL`, `SSH`, `DOCKER` |
-| `target` | the ssh host or docker runtime, or `this machine` |
+| `kind` | `LOCAL`, `SSH`, `DOCKER`, `SWARM`, `APPLE-CONTAINER` |
+| `target` | the ssh host or container runtime, or `this machine` |
 | `workdir` | as the run reported it |
 | `set up as` | the role's `-e` spelling |
 | `image` | the image the flow declares for the role |

@@ -108,7 +108,7 @@ places tried in order.
 | --- | --- |
 | `self` | on the host itself, where the CLI is installed there and can hold the role's fence |
 | `local` | here, reaching the host's files and commands |
-| `ssh:<name>`, `docker:<name>` | on another saved runtime, reaching the host's work from there |
+| `ssh:<name>`, `docker:<name>`, `swarm:<name>`, `apple-container:<name>` | on another saved runtime, reaching the host's work from there |
 
 With no affinity, and on a host nobody saved, the CLI runs on the host where it is installed
 there and here otherwise. Work in the workspace always has its harness here. The places are
@@ -297,14 +297,30 @@ leaves it out. Nothing is left to answer, so the focus moves on to **Done**:
 **3. Save the flow, and type the task.**
 
 ```text
-   @local/onbox
-   Configure each role: an agent (CLI, account, model and effort) or an environment.
-     1. builder                   claude/claude-haiku-4-5-20251001:high
-     2. reviewer                  claude/claude-haiku-4-5-20251001:high
-     3. box                       ssh@build-box                                          ⑥
-        budget                    stops at 10m
-        profiling                 off; traced only
-        save                      flow and roles
+  hmz › @local/onbox                                         ● unsaved changes
+  Configure each role: an agent (CLI, account, model and effort) or an
+  environment; then what the flow takes and what a run may spend.
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ builder                          claude/claude-haiku-4-5-20251001:high ▸ │
+  │   agent                                                                  │
+  │──────────────────────────────────────────────────────────────────────────│
+  │ reviewer                         claude/claude-haiku-4-5-20251001:high ▸ │
+  │   agent                                                                  │
+  │──────────────────────────────────────────────────────────────────────────│
+  │ box                                                      ssh@build-box ▸ │  ⑥
+  │   environment                                                            │
+  │──────────────────────────────────────────────────────────────────────────│
+  │ budget                                                             set ▸ │
+  │   what a run may spend: stops at 10m                                     │
+  │──────────────────────────────────────────────────────────────────────────│
+  │ profiling                                                        ○ off ▾ │
+  │   traced only                                                            │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+
+                                                                          Save
+
+  enter open   tab actions   esc close
 ```
 
 ### What each part means

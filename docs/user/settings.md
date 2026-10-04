@@ -280,8 +280,8 @@ What to look at, by number:
 3. **`○ off ▾`.** The row's value; `▾` says <kbd>enter</kbd> drops its values under it.
 4. **The dropped list.** Every value the row can take, with `✔` on the one in force. An on/off
    switch opens on the answer it is not, so the cursor is already on `on`.
-5. **`● unsaved changes`.** The change is held, not applied. Leaving now asks **save** or
-   **discard**.
+5. **`● unsaved changes`.** The change is held, not applied. Leaving now asks **Save** or
+   **Discard**.
 6. **Save, under the cursor.** <kbd>tab</kbd> moved the focus from the list to the buttons; the
    last line changed to the keys that work there.
 
@@ -936,13 +936,13 @@ answered, or why it could not be reached.
 | proxy jump | The host it is reached through (`ProxyJump`). |
 | options | Anything else ssh is told, `KEYWORD=VALUE` with a comma between two: `ServerAliveInterval=15, Compression=yes`. A setting with a row of its own is refused here. |
 | workdir | Where it works when `-e` names no directory: `/abs/path`, or `~/path` under the login's home. |
-| harness runs on | Where the CLI of an agent working on it runs, tried in order, the next only when one has no room: `self` (on this host), `local` (here), or another saved runtime as `ssh:<name>` or `docker:<name>`, a comma between two: `self, local`. Blank is on the host where its CLI is installed, else here. See [Where the agent runs](/user/remote-execution#where-the-agent-runs). |
+| harness runs on | Where the CLI of an agent working on it runs, tried in order, the next only when one has no room: `self` (on this host), `local` (here), or another saved runtime as `ssh:<name>`, `docker:<name>`, `swarm:<name>` or `apple-container:<name>`, a comma between two: `self, local`. Blank is on the host where its CLI is installed, else here. See [Where the agent runs](/user/remote-execution#where-the-agent-runs). |
 
 Whatever is set is passed to `ssh` ahead of your own config, so what is written here wins.
 
 ### Importing from an ssh config
 
-`import ~/.ssh/config` opens one form: the config to read, then a switch per host it names.
+**Import ~/.ssh/config** opens one form: the config to read, then a switch per host it names.
 
 - `from` is your own config. Type another file's path over it to read that one instead; its
   hosts are then saved with that file named, and `ssh` is told to read it for them.
@@ -1126,8 +1126,10 @@ When the flow changes, what was saved is checked against it again. A setting the
 since dropped or renamed is asked for again, rather than carried over.
 
 Where each environment role works is kept as `-e` spells it. One kept as `local@/srv/x`,
-`docker@local/srv/x` or an ssh host nobody saved out of brackets is read, and kept from then
-on, as `local/srv/x`, `docker/srv/x` or `ssh@[host]/…`.
+`docker@local/srv/x`, `swarm@local/srv/x`, `apple-container@local/srv/x` or an ssh host nobody
+saved out of brackets is read, and kept from then on, as `local/srv/x`, `docker/srv/x`,
+`swarm/srv/x`, `apple-container/srv/x` or `ssh@[host]/…` -- the `@local` ones only while no
+runtime of theirs is saved as `local`, and an ssh host only while none is saved by its name.
 
 ### Changing it
 

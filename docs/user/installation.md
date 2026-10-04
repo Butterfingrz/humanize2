@@ -286,7 +286,9 @@ that project. The full list is in the [CLI reference](/reference/cli).
 
 Older versions used `~/.humanize/` and `.humanize/`. You don't have to do anything about
 them: humanize renames each one to `.hmz` the first time it looks there. If both are there,
-it uses `.hmz` and leaves the old one alone. See [Files](/reference/files#moved-from-humanize).
+it uses `.hmz` and leaves the old one alone. With `HUMANIZE_HOME` set, `~/.humanize` is left
+where it is, so move any flows of your own in `~/.humanize/flows` to `~/.hmz/flows` yourself.
+See [Files](/reference/files#moved-from-humanize).
 
 ## Troubleshooting
 
@@ -330,7 +332,7 @@ uv tool upgrade hmz
 ```
 
 ```sh [pipx]
-pipx upgrade hmz
+pipx reinstall hmz
 ```
 
 ```sh [pip]
@@ -339,9 +341,10 @@ pip install --force-reinstall git+https://github.com/humanfia/humanize.git
 
 :::
 
-`uv tool upgrade` and `pipx upgrade` move humanize to the latest `main`, with the extras it was
-installed with. `pip` needs `--force-reinstall`, as `main` keeps one version number from commit
-to commit and `pip install --upgrade` leaves a version it already has alone. Name an extra
+`uv tool upgrade` and `pipx reinstall` move humanize to the latest `main`, with the extras it
+was installed with. `pipx upgrade` and `pip install --upgrade` do not: `main` keeps one version
+number from commit to commit, and they leave a version they already have alone, so `pip` needs
+`--force-reinstall`. Name an extra
 again: `pip install --force-reinstall 'hmz[all] @ git+https://github.com/humanfia/humanize.git'`.
 
 What changed is in the [commits on `main`](https://github.com/humanfia/humanize/commits/main).

@@ -869,7 +869,8 @@ a caller passes it under.
 ## Environment roles {#where-each-agent-works}
 
 An environment is a working directory on a machine: this one, one reached with `ssh`, or a
-container of its own on a docker daemon or on whichever node of a docker swarm has room.
+container of its own on a docker daemon, on whichever node of a docker swarm has room, or in
+Apple's `container` on this Mac.
 
 ### `EnvCollection` {#envcollection}
 
@@ -896,9 +897,9 @@ class Env(Protocol):
 
 | Member | Value |
 | --- | --- |
-| `workdir` | Where commands run and relative paths resolve: absolute, or `~/…` under the ssh login's home. For `docker`, a directory of the daemon's host, mounted at the same path in the container; for `swarm`, one of the node the task landed on, likewise. |
-| `backend` | `local`, `ssh`, `docker` or `swarm`. |
-| `provider` | `""` for `local`; the ssh destination or saved runtime name for `ssh`; the docker runtime name (`local` for docker's default here) for `docker`; the swarm runtime name (`local` for the swarm this machine manages) for `swarm`. |
+| `workdir` | Where commands run and relative paths resolve: absolute, or `~/…` under the ssh login's home. For `docker`, a directory of the daemon's host, mounted at the same path in the container; for `swarm`, one of the node the task landed on, likewise; for `apple-container`, one of this Mac, likewise. |
+| `backend` | `local`, `ssh`, `docker`, `swarm` or `apple-container`. |
+| `provider` | `""` for `local`; the ssh destination or saved runtime name for `ssh`; the docker runtime name (`local` for docker's default here) for `docker`; the swarm runtime name (`local` for the swarm this machine manages) for `swarm`; the Apple container runtime name (`local` for this Mac's with nothing saved) for `apple-container`. |
 | `available` | Whether the machine was reachable and the workdir existed, as last probed. |
 | `role` | The key it fills. |
 | `derive_subdir(subdir=…)` | An environment at a directory under this workdir, created if missing, same role and grant. `ValueError` for an absolute `subdir` or one that climbs out; `EnvError` if it cannot be made. |
@@ -921,7 +922,8 @@ environment on this machine; an environment on another machine raises `Capabilit
 `class EnvBackendKind(StrEnum)`: `LOCAL = "local"` (this machine), `SSH = "ssh"` (a host
 `ssh` reaches), `DOCKER = "docker"` (a container of its own on a docker runtime's daemon),
 `SWARM = "swarm"` (a container of its own as the one task of a service on a swarm runtime's
-swarm, on whichever node it was placed).
+swarm, on whichever node it was placed), `APPLE_CONTAINER = "apple-container"` (a container of
+its own, a small Linux virtual machine Apple's `container` runs on this Mac).
 
 ### What an environment can do {#what-an-environment-can-do}
 
@@ -945,7 +947,7 @@ and tuples of strings match.
 | `CPUEnvMixin` | `_cpu_count: int` | `1` | Minimum logical CPUs. |
 | `MemoryEnvMixin` | `_memory: int` | `0` | Minimum memory, bytes. |
 | `GPUEnvMixin` | `_gpu_count: int`, `_gpu_memory: int` | `1`, `0` | Minimum GPUs; minimum memory per GPU, bytes. |
-| `ImageEnvMixin` | `_image: str` | `""` | Image a `docker` or `swarm` environment's container starts from: `""` for the provider's image, else `python:3.12-slim`. Needs `/bin/sh` and Python ≥ 3.12; no sshd. Ignored for `local` and `ssh`. |
+| `ImageEnvMixin` | `_image: str` | `""` | Image a `docker`, `swarm` or `apple-container` environment's container starts from: `""` for the provider's image, else `python:3.12-slim`. Needs `/bin/sh` and Python ≥ 3.12; no sshd. Ignored for `local` and `ssh`. |
 
 An attribute is read only where its mixin is among the type's bases. For `local` and `ssh`, a
 machine with less than declared is refused before anything runs with
@@ -964,6 +966,11 @@ reserved as the runtime's generic resource. A runtime without that much left, or
 node of the swarm takes, is refused with `ResourceUnmet` the same way
 ([how](/reference/machines#swarm-environments)). Everything derived from a `swarm`
 environment is in the task's container.
+
+For `apple-container` the CPUs and memory size the container's virtual machine, and a role
+declaring `GPUEnvMixin` is refused with `ResourceUnmet`, Apple's containers being given no GPU
+([how](/reference/machines#apple-container-environments)). Everything derived from an
+`apple-container` environment is in the same container.
 
 ### Worktrees, copies and scratch directories {#worktrees-copies-and-scratch-directories}
 
@@ -1116,7 +1123,9 @@ behave as anywhere.
 
 A flow with `resumable=True` keeps a journal while it runs. The newest run of it in a
 workspace is picked up by `hmz exec --resume`, `/resume`, `Hmz().run(resume=True)`, or *resume
-run* on `/epics` (a chosen epic).
+run* on `/epics` (a chosen epic). "Of it" is by its canonical ref, `<directory>:<flow>`, or by
+the name it was run under: flows kept in directories of one name -- `alice/kernel` and
+`bob/kernel` -- share a ref, so the newest run of either is the one picked up.
 
 | Refusal | Message |
 | --- | --- |
@@ -1249,7 +1258,9 @@ copies from.
 - Two directories claiming one top-level name while a run uses one raise `FlowLoadConflict`
   (`<a> and <b> both import '<name>', and a run going now uses the second`); a name held in
   `sys.modules` by something that is not a flow raises
-  `importing <dir> would replace the module '<name>' (<file>)`.
+  `importing <dir> would replace the module '<name>' (<file>)`. Flows kept in directories of
+  one name -- `alice/kernel` and `bob/kernel`, or `@a/loop` and `@b/loop` -- claim the same
+  name, so one run cannot call both.
 - A module's flows are the `@flow` objects defined in files inside its directory; one imported
   from elsewhere is not one of its flows.
 
@@ -1355,8 +1366,8 @@ wins:
 | --- | --- | --- |
 | 1 | `local` | `.hmz/flows/` under the current directory |
 | 2 | `user` | `~/.hmz/flows/` (literally `~`, not `HUMANIZE_HOME`) |
-| 3 | `official` | the package's `hmz/flows/builtin/`, then `~/.hmz/flowverses/official/installed/` |
-| 4 | other flowverses | `~/.hmz/flowverses/<name>/installed/`, alphabetically |
+| 3 | `official` | the package's `hmz/flows/builtin/`, then `~/.hmz/flowverses/official/installed/` (under `HUMANIZE_HOME` where it is set) |
+| 4 | other flowverses | `~/.hmz/flowverses/<name>/installed/` (likewise), alphabetically |
 
 Only what is built in, installed or in `local` and `user` is found: never a flow an index only
 lists. `<user>/<flow>` looks in `official` only, and `@<flowverse>/…` in that flowverse only. A
@@ -1596,7 +1607,7 @@ Read [Security](/user/security) before running any.
 
 ```sh
 hmz exec -f <flow> [-a <role>=<spec>[,…]]… [-e <role>=<spec>[,…]]… [-p <key>=<value>[,…]]…
-         [--resume] [--json] <task>
+         [--profile] [--resume] [--json] <task>
 ```
 
 `-a`, `-e` and `-p` may each be repeated; every occurrence is a comma list. A comma
@@ -1726,7 +1737,7 @@ work is on, an ordered list whose next entry is tried only where the one before 
 | --- | --- |
 | here | here |
 | on a machine nobody saved, or a runtime with no affinity | on the environment's machine, natively, if all hold: no `on_pre_tool_use`/`on_permission_request` hook hung when the session opens (an `on_ask_user` hook does not keep it here); the CLI is on that machine's `PATH`; for a fenced session, that machine can hold the fence. Otherwise here, anchored to the machine. |
-| on a runtime with an affinity | the first entry with room: `local` here, anchored to the machine (always room); `self` natively on the machine (no room where the CLI is missing or the fence cannot be held); `ssh:<name>` / `docker:<name>` on that runtime, acting on the work through the anchor (no room where it cannot be opened or reached, has no share left, or the role's permission is anything but every scope `ALL`) |
+| on a runtime with an affinity | the first entry with room: `local` here, anchored to the machine (always room); `self` natively on the machine (no room where the CLI is missing or the fence cannot be held); `ssh:<name>`, `docker:<name>`, `swarm:<name>` or `apple-container:<name>` on that runtime, acting on the work through the anchor (no room where it cannot be opened or reached, has no share left, or the role's permission is anything but every scope `ALL`) |
 
 The affinity is the one of the runtime actually opened for the work; a runtime a harness is
 put on is opened as an environment of its own (its workdir, else `~` over ssh, else

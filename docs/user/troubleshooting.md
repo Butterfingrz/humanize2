@@ -269,7 +269,7 @@ runs](/user/remote-execution#where-the-agent-runs).
 
 **Verify.** The usage line is gone.
 
-### `build-box: 'somewhere' is not where a harness runs: self, local or <ssh|docker|swarm>:<runtime name>`
+### `build-box: 'somewhere' is not where a harness runs: self, local or <ssh|docker|swarm|apple-container>:<runtime name>`
 
 **Symptom.** Saving a host or a daemon on the runtimes page, or `Hmz().runtimes.new(…)`, is
 refused with this, or with `… is in its affinity twice` or `… its affinity names itself; self
@@ -425,7 +425,7 @@ open the `budget` row and set at least one limit.
 **Cause.** The flow has never been set up in this directory, and you left the sheet without
 saving.
 
-**Fix.** Type the line again, fill every role, and choose `save` this time.
+**Fix.** Type the line again, fill every role, and press **Save** this time.
 
 **Verify.** The flow starts on the task.
 
@@ -1045,7 +1045,7 @@ listening before you upgraded.
 
 **Verify.** The turn starts.
 
-### `unsupported target '…'; expected ssh://HOST, docker://CONTAINER[@ENDPOINT], tcp://HOST:PORT, peer://TICKET@HOST:PORT or local[:PATH]`
+### `unsupported target '…'; expected ssh://HOST, docker://CONTAINER[@ENDPOINT], apple-container://CONTAINER, tcp://HOST:PORT, peer://TICKET@HOST:PORT or local[:PATH]`
 
 **Symptom.** A target is refused.
 

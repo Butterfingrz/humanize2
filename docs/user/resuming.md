@@ -62,9 +62,11 @@ There are three ways in:
 | `/epics`, then **resume run** | any run you choose | the same: that run's own setup |
 | `hmz exec --resume` | the newest run of the `-f` flow here that saved something | the line's own `-a`, `-e` and `-p`, budget included |
 
-A run whose environments were written down as `local@/srv/x`, `docker@local/srv/x` or an ssh
-host nobody saved out of brackets is picked up on the same places, spelled as `-e` takes them:
-`local/srv/x`, `docker/srv/x`, `ssh@[host]/…`.
+A run whose environments were written down as `local@/srv/x`, `docker@local/srv/x`,
+`swarm@local/srv/x`, `apple-container@local/srv/x` or an ssh host nobody saved out of brackets
+is picked up on the same places, spelled as `-e` takes them: `local/srv/x`, `docker/srv/x`,
+`swarm/srv/x`, `apple-container/srv/x`, `ssh@[host]/…` -- the `@local` ones only while no
+runtime of theirs is saved as `local`, and an ssh host only while none is saved by its name.
 
 ## Example: stop a Ralph loop on its budget, then carry it on
 
@@ -234,6 +236,7 @@ At the prompt, `/resume` typed when it cannot carry a run on says why:
 | --- | --- | --- |
 | `no flow has been run here, so there is nothing to resume` | Nothing has run in this directory. | Start `hmz` where the run started. |
 | `no run here was of a flow that can be resumed, so there is nothing to resume` | Every run here was of a flow that cannot be. | Start the flow afresh. |
+| `<run> cannot be resumed: <flow>: a flow of local is called @local/<flow> now` | The run is from before flows of anywhere but `official` were named after an `@`, and is not carried on under the new name. | Start `$@local/<flow>` afresh. |
 | `<flow> does not support resuming, so <run> cannot be resumed` | The flow has been changed since that run and no longer can be. | Start it afresh. |
 | `<run> has no saved state to resume: enter a task to start the flow from the beginning` | The run was killed before it saved anything. | Type the task: the flow starts from the top. |
 | `<run> cannot be read, so there is nothing to resume` | The run's record is damaged. | Pick another run from `/epics`. |

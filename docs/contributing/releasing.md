@@ -10,7 +10,8 @@ never replaced: one that turns out broken is yanked, and the next one fixes it.
 ::: warning No release yet
 humanize has not been released, so every install is of `main` from GitHub. The first release
 also turns each `git+https://github.com/humanfia/humanize.git` in `README.md` and the docs
-into plain `hmz`.
+into plain `hmz`, and `SUPPORT.md`, `SECURITY.md` and the bug report and question templates
+back to supporting, and asking for, a release.
 :::
 
 ::: info Before you start
@@ -126,8 +127,9 @@ files** page: each file names `publish.yaml` on humanfia/humanize as its publish
 **A release candidate.** Tag `v0.2.0-rc.1`, then `v0.2.0-rc.2`, and `v0.2.0` once it holds.
 Both GitHub and PyPI mark it as a pre-release.
 
-**A dry run.** `gh workflow run publish.yaml --ref main` builds and checks the package exactly
-as a release would, and publishes nothing. Use it after changing `README.md`, which is the
+**A dry run.** `gh workflow run publish.yaml --ref main` builds and checks the package as a
+release would, but keeps `pyproject.toml`'s version, there being no tag to take one from, and
+publishes nothing. Use it after changing `README.md`, which is the
 page PyPI shows, or the metadata in `pyproject.toml`.
 
 **On your machine.** GoReleaser builds the same files without publishing anything:
