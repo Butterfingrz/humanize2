@@ -1,11 +1,12 @@
 """A run of a flow that never stops on its own, stopped by the budget it was given.
 
 End to end and out of process: `hmz exec` on a flow whose loop has no exit of its own, under
-a stand-in CLI, with the budget `-b` says. What is proved is the whole of what a budget is for
--- that the process exits rather than looping for a week, that the epic says the run was
-stopped rather than done, and that each of the three dimensions does it on its own. The
+a stand-in CLI, with the budget `-p budget.*` says. What is proved is the whole of what a
+budget is for -- that the process exits rather than looping for a week, that the epic says the
+run was stopped rather than done, and that each of the three dimensions does it on its own. The
 engine's own tests prove the reckoning; only this can prove the loop actually ends. And a run
-given no budget at all is not started: `-b` is required, so there is no run nothing will stop.
+given no budget at all is not started: `-p budget.*` is required, so there is no run nothing
+will stop.
 """
 
 from __future__ import annotations
@@ -114,12 +115,13 @@ def _ran(
     model: str = "m",
     timeout: float = 120.0,
 ) -> subprocess.CompletedProcess[str]:
-    """One `hmz exec` of the endless flow, under the budget `-b` says.
+    """One `hmz exec` of the endless flow, under the budget `-p budget.<limit>=` says.
 
     Args:
       tmp_path: Where the flow goes.
       said: The environment, out of the `stand_in` fixture.
-      budget: What `-b` says the run may spend, or "" for no `-b` at all.
+      budget: What the run may spend, each limit as `-p budget.` is followed by it --
+        `cost=1,duration=1h` -- or "" for no budget at all.
       model: What the stand-in CLI is told to run -- `m`, which the list beside it prices,
         unless a test wants one nobody prices.
       timeout: How long to give it before it is killed, for a run that never ends.
@@ -137,7 +139,11 @@ def _ran(
             str(tmp_path / "flows" / "forever"),
             "-a",
             f"worker=opencode/{model}:high",
-            *(["-b", budget] if budget else []),
+            *(
+                ["-p", ",".join(f"budget.{one}" for one in budget.split(","))]
+                if budget
+                else []
+            ),
             "go",
         ],
         capture_output=True,
@@ -197,7 +203,7 @@ def test_a_loop_with_no_exit_of_its_own_is_stopped_by_its_budget(
 def test_a_run_given_no_budget_is_not_started(
     tmp_path: Path, stand_in: dict[str, str]
 ) -> None:
-    """A line with no `-b` is a line to correct, before any agent has taken a turn."""
+    """A line with no `-p budget.*` is a line to correct, before any agent has taken a turn."""
     ran = _ran(tmp_path, stand_in, "")
 
     assert ran.returncode == 2
@@ -234,7 +240,7 @@ def test_a_budget_that_cannot_be_read_stops_the_line_before_anything_runs(
     ran = _ran(tmp_path, stand_in, budget)
 
     assert ran.returncode == 2
-    assert "-b" in ran.stderr
+    assert "-p" in ran.stderr
     assert _how(stand_in) == []  # nothing ran at all
 
 

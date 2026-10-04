@@ -109,10 +109,10 @@ async def test_what_is_set_there_is_kept_and_read_back(
         await until(lambda: isinstance(app.screen, Configures), driver)
         sheet = cast("Configures", app.screen)
 
-        # The four `-b` takes, and the row that sets them.
+        # The four limits `-p budget.*` takes, and the row that sets them.
         assert rows(app) == ["duration", "cost", "output_tokens", "graceful", _DONE]
 
-        await changes(app, driver, "duration", *"1h")  # written, as `-b` writes one
+        await changes(app, driver, "duration", *"1h")  # written, as `-p` writes one
         await changes(app, driver, "cost", "1")  # the 0.0 there, selected, typed over
         assert (sheet._typed_in["duration"], sheet._typed_in["cost"]) == ("1h", "1")
         await onto(app, driver, _DONE)
@@ -303,7 +303,7 @@ async def _reopens(app: Humanize, driver: Pilot[None]) -> Configures:
 async def test_a_duration_set_there_opens_again_as_it_was_written(
     flows: Path, typed: str, shown: str, held: datetime.timedelta
 ) -> None:
-    """In the units `-b duration=` reads, however long it is.
+    """In the units `-p budget.duration=` reads, however long it is.
 
     A duration of a million seconds or more once reopened as `1.0368e+06s`, which the sheet
     it was opened on then refused -- and the interface fell over opening it.
