@@ -72,9 +72,7 @@ M/
 
 ~/.hmz/flows/                      your flows (flowverse `user`)
 <workspace>/.hmz/
-├── flows/                              this project's flows (flowverse `local`)
-├── .gitignore                          `*.epic.tar.gz`, written by the first export if absent
-└── <epic>.epic.tar.gz                  exported runs
+└── flows/                              this project's flows (flowverse `local`)
 ```
 
 ## Settings and state
@@ -359,14 +357,6 @@ One run ([Tracing › Epics](/reference/tracing#epics) has every schema). `<stam
 | `traces/*.trace.json` | on demand; plain write | [Chrome trace](/reference/tracing#document) |
 
 Epics are never deleted by humanize.
-
-### `<workspace>/.hmz/<epic>.epic.tar.gz`
-
-An [exported run](/reference/tracing#export). Written with `mkstemp` (mode `0600`) and renamed;
-exporting the same run again replaces it. Nothing in humanize imports one. Exporting here
-also writes `<workspace>/.hmz/.gitignore` (`*.epic.tar.gz`) where there is none, so a
-`git add -A` in the workspace, an agent's included, does not commit the archive; one already
-there is left as it is.
 
 ## Caches
 
