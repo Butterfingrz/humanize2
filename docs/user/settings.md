@@ -116,7 +116,7 @@ straight into the one named, and the word is offered as you type it:
 | [**General**](#general) | `general` | whether the screen [shows the working](#details), which agent `/btw` talks to, and whether humanize reports what goes wrong |
 | [**Accounts**](#accounts) | `accounts` | every account an agent may run as, under a heading per CLI |
 | [**Fallback**](#fallback) | `fallback` | where a turn goes when the place taking it cannot take it |
-| [**Runtimes**](#runtimes) | `runtimes` | the machines a flow's environments go on: ssh hosts, docker daemons and docker swarms |
+| [**Runtimes**](#runtimes) | `runtimes` | the machines a flow's environments go on: ssh hosts, docker daemons, docker swarms and Apple containers |
 | [**Flowverses**](#flowverses) | `flowverses` | the git repositories flows come from |
 | [**Workspace**](#workspace) | `workspace` | the flow this directory opens on, and forgetting it |
 
@@ -822,8 +822,9 @@ The rest is in the [SDK reference](/reference/sdk).
 
 A **runtime** is a machine a flow's [environment
 roles](/user/remote-execution) can be put on, saved under a name: an ssh host with everything
-`ssh` has to be told to reach it, a docker daemon with what it may hand out, or a docker swarm
-with where its tasks may go and what they may reserve all told. Save one here,
+`ssh` has to be told to reach it, a docker daemon with what it may hand out, a docker swarm
+with where its tasks may go and what they may reserve all told, or this Mac's Apple
+containers with what they may have between them. Save one here,
 then choose it for a role at [`/flow`](#choosing-one-for-a-role), or name it after the `@` of
 `-e`:
 
@@ -842,9 +843,9 @@ Type `/settings runtimes`:
 <Term title="/settings · Runtimes">
 
 <pre>  <span class="m">/settings ›</span> <span class="p b">Runtimes</span>
-  <span class="m">Saved ssh hosts, docker daemons with the resources each may hand out, and docker
-  swarms with what their tasks may reserve, used by name as flow environments in -e and
-  /flow. Changes take effect immediately.</span>
+  <span class="m">Saved ssh hosts, docker daemons with the resources each may hand out, docker
+  swarms with what their tasks may reserve, and this Mac's Apple containers, used by
+  name as flow environments in -e and /flow. Changes take effect immediately.</span>
 
   <span class="p">╭──────────────────────────────────────────────────────────────────────────────────╮</span>
     <span class="p">ssh</span>
@@ -868,8 +869,8 @@ Type `/settings runtimes`:
   <kbd>enter</kbd>. From an empty page, where the focus opens on **Add a runtime…**, that is
   three key presses, <kbd>→</kbd> <kbd>enter</kbd> <kbd>enter</kbd>, however many hosts there
   are -- or two clicks.
-- **Add one by hand.** Press **Add a runtime…**: it drops the three kinds, `ssh host`,
-  `docker host` and `docker swarm`, over the button. Pick `ssh host`, type
+- **Add one by hand.** Press **Add a runtime…**: it drops the four kinds, `ssh host`,
+  `docker host`, `docker swarm` and `apple containers`, over the button. Pick `ssh host`, type
   `me@box.example.com:2200`, and choose `done`. The login and the port go to their own rows,
   and the name is written in for you (`box`, the host's first label).
 - **Add a docker daemon.** Press **Add a runtime…** and pick `docker host`, then `detect` (two
@@ -969,6 +970,16 @@ task may go:
 check says which those are -- `12 nodes: node01, node02, … and 4 more` -- and, in yellow, a
 quota more than they have or a GPU resource none of them advertises.
 
+### Apple containers
+
+`apple containers` under **Add a runtime…** opens a docker host's form less its `endpoint`,
+`OCI runtime` and `gpus`: Apple's `container` runs this Mac's containers and no other's, and
+gives them no GPU. `name` is written in as `local` unless that is taken, `run args` is anything
+else `container run` is told, and `cpus` and `memory` are what its containers may have between
+them, each blank for all of this Mac's. **`detect`** writes those in from
+`container system status` and the Mac's memory. See
+[Containers › Apple containers on a Mac](/user/containers#apple-containers).
+
 ### On one runtime
 
 <kbd>enter</kbd> on a runtime opens what can be done to it, all of it at once:
@@ -1005,7 +1016,7 @@ At `/flow`, <kbd>enter</kbd> on an environment role opens where it is:
   backend saved here, with `add an
   ssh host` above them (the same form, and the new one comes back chosen) and, for ssh, `unsaved
   host`: any host `ssh` reaches, as you would type it, saved nowhere, and spelled in brackets
-  (`ssh@[me@box:2222]/…`). For docker or a swarm, left empty it is this machine's
+  (`ssh@[me@box:2222]/…`). For docker, a swarm or Apple containers, left empty it is this machine's
   (`docker/…`).
 - `workdir` starts from where the runtime was saved to work. Left as it is, the spelling
   leaves it out (`ssh@gpu`), so the role goes on following the runtime when its workdir is
