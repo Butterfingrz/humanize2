@@ -40,7 +40,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from hmz import home
+from hmz import here, home
 
 __all__ = [
     "FLOWS",
@@ -80,8 +80,8 @@ USER = "user"
 #: wherever humanize is being run, and `~` is whoever is running it, neither of which is
 #: settled when this is imported.
 MINE = {
-    LOCAL: ".humanize/flows",
-    USER: "~/.humanize/flows",
+    LOCAL: ".hmz/flows",
+    USER: "~/.hmz/flows",
 }
 
 #: The names a flowverse cannot be added under, being the three that are always listed. One is
@@ -263,10 +263,13 @@ def _own(name: str) -> Flowverse:
       yours on it, which is a thing to say rather than the reason a flow humanize itself came
       with could not be found.
     """
+    # This project's are in its own directory, which moves one kept under its old name to
+    # where they are read from.
+    at = here() / "flows" if name == LOCAL else Path(os.path.expanduser(MINE[name]))
     return Flowverse(
         name=name,
         url="",
-        at=Path(os.path.expanduser(MINE[name])),
+        at=at,
         fetched=True,
         fixed=True,
     )
