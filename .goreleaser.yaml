@@ -30,10 +30,40 @@ builds:
 checksum:
   name_template: checksums.txt
 
-# GitHub's own generated notes, which .github/release.yml sorts by the labels each pull
-# request's Conventional Commits title gives it.
+# Every commit on main since the previous tag, each a squashed pull request's Conventional
+# Commits title, grouped by its type. A commit lands in the first group it matches.
 changelog:
-  use: github-native
+  use: git
+  sort: asc
+  # The title already ends with its pull request's number.
+  abbrev: -1
+  filters:
+    exclude:
+      # A chore is housekeeping: nothing somebody installing `hmz` would notice. A breaking one
+      # has a `!`, and is kept.
+      - '^chore(\(.+\))?:'
+      # Dependabot moves what the lockfile, CI and the docs site pin, none of which a published
+      # `hmz` carries.
+      - '^\w+(\(.+\))?: bump '
+      - '^Merge '
+  groups:
+    - title: Breaking changes
+      regexp: '^\w+(\(.+\))?!:'
+      order: 0
+    - title: Features
+      regexp: '^feat(\(.+\))?:'
+      order: 1
+    - title: Fixes
+      regexp: '^fix(\(.+\))?:'
+      order: 2
+    - title: Performance
+      regexp: '^perf(\(.+\))?:'
+      order: 3
+    - title: Documentation
+      regexp: '^docs(\(.+\))?:'
+      order: 4
+    - title: Other changes
+      order: 999
 
 release:
   # A draft until PyPI has taken the same files, so the release never offers what PyPI refused.

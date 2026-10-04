@@ -78,12 +78,12 @@ coverage with a table by file. The whole report is the run's `coverage` artifact
 
 ## Other workflows
 
-None of these reports to `ci-ok`. On a pull request, wait for `title` from `triage.yml` too.
+None of these reports to `ci-ok`. On a pull request, wait for `title` from `title.yml` too.
 
 | Workflow | Runs on | Does |
 | --- | --- | --- |
 | `build-docs.yml` | a push to `main` that changed `docs/` | Builds the site and deploys it. Every other run reaches it as `ci.yml`'s `docs` job |
-| `triage.yml` | every pull request, and a push to `main` that changed `labels.yml` | `title` checks the title is a Conventional Commit, `label` labels the pull request from it and from its paths, and `labels` syncs `labels.yml` to the repository |
+| `title.yml` | every pull request | `title` checks the title is a Conventional Commit |
 | `codeql.yml` | a pull request into `main`, a push to it, and weekly | Scans the Python and the workflows, into the repository's Security tab |
 | `scorecard.yml` | a push to `main`, and weekly | Scores the repository against the [OpenSSF Scorecard](https://scorecard.dev) checks, into the Security tab |
 | `publish.yaml` | a published release, or a dry run by hand | Builds the package and publishes it to PyPI: [Releasing](/contributing/releasing) |

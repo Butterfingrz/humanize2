@@ -143,7 +143,7 @@ Without push access, run `gh repo fork --remote` first and push to your fork. `g
 opens the pull request across it either way.
 
 CI then runs everything a change to `main` is held to, for what your change touched, and
-`triage.yml` reads the pull request itself:
+`title.yml` reads the pull request itself:
 
 | | |
 | --- | --- |
@@ -152,7 +152,7 @@ CI then runs everything a change to `main` is held to, for what your change touc
 | `build`, `smoke` | `uv build`, and the wheel started with no extras installed |
 | `docs` | Only when `docs/` changed: `pnpm build`, then `pnpm check:anchors` and `pnpm check:legible` |
 | `ci-ok` | Green when every job that ran passed |
-| `title`, `label` | From `triage.yml`: the title is a Conventional Commit, which `--fill` took from your commit, and labels from it and from the paths it changes |
+| `title` | From `title.yml`: the title is a Conventional Commit, which `--fill` took from your commit |
 
 ## Check it worked
 

@@ -1,7 +1,6 @@
 name: Documentation
 description: A page of the docs is wrong, missing something, or hard to follow.
 title: "[Docs]: "
-labels: ["area/docs", "needs-triage"]
 body:
   - type: markdown
     attributes:

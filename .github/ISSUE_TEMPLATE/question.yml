@@ -1,7 +1,6 @@
 name: Question
 description: Ask how to do something the docs did not answer.
 title: "[Question]: "
-labels: ["question", "needs-triage"]
 body:
   - type: markdown
     attributes:

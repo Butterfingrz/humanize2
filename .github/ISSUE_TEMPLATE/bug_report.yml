@@ -2,7 +2,6 @@ name: Bug Report
 description: Something in humanize does not work.
 title: "[Bug]: "
 type: bug
-labels: ["needs-triage"]
 body:
   - type: markdown
     attributes:

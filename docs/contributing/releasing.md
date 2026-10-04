@@ -51,10 +51,10 @@ Nobody holds a PyPI token: PyPI lets that one workflow, run in the repository's 
 environment, publish `hmz`, which is called trusted publishing. Every file it publishes carries
 an attestation naming the workflow run that built it.
 
-The release notes are GitHub's own, generated from the pull requests merged since the last
-tag and grouped by the labels their titles give them (`.github/release.yml`): breaking
-changes, features, fixes, performance, documentation, and everything else. Chores that break
-nothing, and Dependabot's bumps, are left out.
+The release notes are GoReleaser's, generated from the commits on `main` since the last tag
+and grouped by their Conventional Commits titles (`.goreleaser.yaml`): breaking changes,
+features, fixes, performance, documentation, and everything else. Chores that break nothing,
+and Dependabot's bumps, are left out.
 
 Which part of the version to bump:
 

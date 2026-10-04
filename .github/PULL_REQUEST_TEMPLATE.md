@@ -1,6 +1,6 @@
 <!--
 The title is a Conventional Commit, `type(scope): what it does`, with `!` before the colon if
-it breaks something. The triage workflow checks it and labels the pull request from it.
+it breaks something. The title workflow checks it.
 CONTRIBUTING.md has the rest: https://github.com/humanfia/humanize/blob/main/CONTRIBUTING.md
 -->
 

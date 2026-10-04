@@ -10,6 +10,8 @@ updates:
     directories:
       - /
       - /.github/actions/*
+    # No labels: this repository manages nothing by them.
+    labels: []
     schedule:
       interval: monthly
     cooldown:
@@ -22,6 +24,7 @@ updates:
 
   - package-ecosystem: uv
     directory: /
+    labels: []
     schedule:
       interval: monthly
     cooldown:
@@ -36,6 +39,7 @@ updates:
   # The hooks pre-commit fetches for itself. ruff and pyright are `uv`'s, above.
   - package-ecosystem: pre-commit
     directory: /
+    labels: []
     schedule:
       interval: monthly
     cooldown:
@@ -49,6 +53,7 @@ updates:
   # The documentation site, which is the one part of this repository that is not Python.
   - package-ecosystem: npm
     directory: /docs
+    labels: []
     schedule:
       interval: monthly
     cooldown:

@@ -20,11 +20,7 @@ Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 | fix or build something | a pull request, as below |
 | share a flow you wrote | keep it in a repository of your own, and list it in [humanfia/flowverse](https://github.com/humanfia/flowverse) with a pull request there |
 
-Issues labelled
-[`good first issue`](https://github.com/humanfia/humanize/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-and [`help wanted`](https://github.com/humanfia/humanize/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
-are ready to pick up. Say so on the issue before you start, so that two people do not do the
-same work.
+Say so on an issue before you start on it, so that two people do not do the same work.
 
 ## Before you write code
 
@@ -64,9 +60,8 @@ Commits follow the same form: see
 commit has that commit checked too, because squashing it writes the commit's message to `main`
 rather than the title.
 
-You do not label anything yourself. The `triage` workflow checks the title, labels the pull
-request `type/<type>` from it, and `breaking` for a `!`, and adds an `area/*` label for each
-part of the repository it touches. Edit the title and the labels follow.
+The `title` workflow checks the title. The release notes are grouped by it, so a `feat` or a
+`!` there is what puts the change under Features or Breaking changes.
 
 No sign-off or CLA is asked for. What you contribute is under the project's
 [Apache-2.0 license](LICENSE), as its section 5 says.
