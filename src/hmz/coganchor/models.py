@@ -711,6 +711,85 @@ def _dsh(profile: Profile, _run: Callable[..., str]) -> list[Model]:
     return [Model(name, profile.efforts, profile.swarms) for name in _ADVISORY["dsh"]]
 
 
+#: The providers litellm's own catalogue is read for: the ones its ways in give an account of.
+_LITELLM_PROVIDERS = frozenset(
+    {
+        "openai",
+        "anthropic",
+        "gemini",
+        "xai",
+        "openrouter",
+        "deepseek",
+        "groq",
+        "mistral",
+        "bedrock",
+        "vertex_ai",
+        "azure",
+    }
+)
+
+
+#: The catalogue of models and prices litellm ships, beside its own package.
+_LITELLM_CATALOGUE = "model_prices_and_context_window_backup.json"
+
+
+def _litellm(profile: Profile, _run: Callable[..., str]) -> list[Model]:
+    """The chat models litellm knows how to call, as a turn names them: `provider/id`.
+
+    Read off the catalogue litellm itself ships rather than asked of anybody: it is a library,
+    not a CLI, and what it can call is what it knows the price and the shape of. Read as the
+    file it ships, without importing litellm, which is seconds of an interface opening spent
+    loading a library nothing is about to call. A gateway account is answered by its endpoint
+    instead and never reaches this.
+
+    Args:
+      profile: litellm's own.
+      _run: Unused, there being no command to run.
+
+    Returns:
+      Every chat model of a provider litellm has a way in for, at the whole ladder where
+      litellm says the model reasons and at none where it says it does not.
+
+    Raises:
+      ValueError: If litellm is not installed here.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    found_at = importlib.util.find_spec("litellm")
+    if found_at is None or found_at.origin is None:
+        raise ValueError(f"litellm is not installed here: {profile.installs}")
+    shipped = Path(found_at.origin).parent / _LITELLM_CATALOGUE
+    try:
+        read: object = json.loads(shipped.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as why:
+        raise ValueError(f"litellm's own catalogue could not be read: {why}") from why
+    listed = cast("dict[str, Any]", read) if isinstance(read, dict) else {}
+    found: list[Model] = []
+    for name, raw in listed.items():
+        if not isinstance(raw, dict):
+            continue
+        said = cast("dict[str, Any]", raw)
+        listed_as = str(said.get("litellm_provider") or "")
+        # By family rather than exactly: litellm files Vertex's models under
+        # `vertex_ai-language-models` and the like, and Bedrock's newer ones under
+        # `bedrock_converse`, and a turn names every one of them by the family.
+        provider = next(
+            (
+                one
+                for one in _LITELLM_PROVIDERS
+                if listed_as == one or listed_as.startswith((f"{one}-", f"{one}_"))
+            ),
+            None,
+        )
+        if said.get("mode") != "chat" or provider is None:
+            continue
+        spelled = name if name.startswith(f"{provider}/") else f"{provider}/{name}"
+        efforts = profile.efforts if said.get("supports_reasoning") else ()
+        found.append(Model(spelled, efforts, profile.swarms))
+    return found
+
+
 def _pi(profile: Profile, run: Callable[..., str]) -> list[Model]:
     """Pi's models, which it prints as a table of the providers it has credentials for.
 
@@ -1085,6 +1164,7 @@ _READING: dict[str, Callable[[Profile, Callable[..., str]], list[Model]]] = {
     "dsh": _dsh,
     "grok": _grok,
     "kimi": _kimi,
+    "litellm": _litellm,
     "mcode": _mcode,
     "pi": _pi,
     "qwen": _qwen,
