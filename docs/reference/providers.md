@@ -147,6 +147,8 @@ order, then `env` for every backend but `dsh`.
 | | `google-cloud` | — | `ANTHROPIC_GOOGLE_CLOUD_PROJECT`, `ANTHROPIC_GOOGLE_CLOUD_LOCATION` (`global`), `ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID` | `CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD=1` |
 | `agy` | `login` | `agy` (interactive) | — | |
 | | `key` | — | `GEMINI_API_KEY` • | |
+| | `gemini-gateway` | — | `AGY_LLM_GATEWAY_URL`, `AGY_LLM_GATEWAY_API_KEY` • | `AGY_LLM_GATEWAY_WIRE_PROTOCOL=genai` |
+| | `openai-gateway` | — | `AGY_LLM_GATEWAY_URL`, `AGY_LLM_GATEWAY_API_KEY` •, `AGY_LLM_GATEWAY_MODELS` (comma-separated) | `AGY_LLM_GATEWAY_WIRE_PROTOCOL=openai` |
 | | `adc` | — | `GOOGLE_APPLICATION_CREDENTIALS` (a file path) | `AGY_ADC_AUTH=1` |
 | `codex` | `login` | `codex login` | — | |
 | | `device` | `codex login --device-auth` | — | |
@@ -209,6 +211,15 @@ order, then `env` for every backend but `dsh`.
 - `qwen` has no `login`: Qwen OAuth was discontinued on 2026-04-15 and `qwen` 0.24.7 refuses
   `--auth-type qwen-oauth`. A plan's key goes in as `OPENAI_API_KEY`; the `BAILIAN_*` names
   `/auth` keeps it under are read only through a `settings.json` `modelProviders` entry.
+- `agy`'s two gateway ways are its enterprise LLM gateway. The key goes as
+  `Authorization: Bearer`. `gemini-gateway` streams
+  `<url>/v1beta/models/<model>:streamGenerateContent` and its models are agy's own Gemini
+  models. `openai-gateway` streams `<url>/v1/chat/completions`, and `AGY_LLM_GATEWAY_MODELS` is
+  every model it may run: `agy models` lists exactly those, at no effort, since agy refuses
+  `--effort` for them.
+- `agy`'s `key` way needs `"modelProvider": "gemini"` in `~/.gemini/antigravity-cli/settings.json`
+  (agy 1.1.13 and later). That file is shared by every agy account, and agy refuses to start
+  while the setting is there without `GEMINI_API_KEY`, so humanize does not write it.
 
 ### The `env` way
 
@@ -406,7 +417,7 @@ is left exactly as found. All four apply whichever way the account was made.
 
 | Backend | `hushes()` |
 | --- | --- |
-| `agy` | `AGY_ADC_AUTH`, `CLOUD_CODE_URL`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_GEMINI_BASE_URL` |
+| `agy` | `AGY_ADC_AUTH`, `AGY_LLM_GATEWAY_API_KEY`, `AGY_LLM_GATEWAY_CA_CERT`, `AGY_LLM_GATEWAY_HEADERS`, `AGY_LLM_GATEWAY_MODELS`, `AGY_LLM_GATEWAY_PROXY_URL`, `AGY_LLM_GATEWAY_URL`, `AGY_LLM_GATEWAY_WIRE_PROTOCOL`, `CLOUD_CODE_URL`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_GEMINI_BASE_URL` |
 | `claude` | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_AWS_API_KEY`, `ANTHROPIC_AWS_BASE_URL`, `ANTHROPIC_AWS_WORKSPACE_ID`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_BEDROCK_BASE_URL`, `ANTHROPIC_BEDROCK_MANTLE_BASE_URL`, `ANTHROPIC_CONFIG_DIR`, `ANTHROPIC_CUSTOM_HEADERS`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_FOUNDRY_API_KEY`, `ANTHROPIC_FOUNDRY_AUTH_TOKEN`, `ANTHROPIC_FOUNDRY_BASE_URL`, `ANTHROPIC_FOUNDRY_RESOURCE`, `ANTHROPIC_GOOGLE_CLOUD_BASE_URL`, `ANTHROPIC_GOOGLE_CLOUD_LOCATION`, `ANTHROPIC_GOOGLE_CLOUD_PROJECT`, `ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID`, `ANTHROPIC_IDENTITY_TOKEN`, `ANTHROPIC_IDENTITY_TOKEN_FILE`, `ANTHROPIC_MODEL`, `ANTHROPIC_OAUTH_TOKEN`, `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_PROFILE`, `ANTHROPIC_SCOPE`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_VERTEX_BASE_URL`, `ANTHROPIC_VERTEX_PROJECT_ID`, `ANTHROPIC_WORKSPACE_ID`, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_PROFILE`, `AWS_REGION`, `CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR`, `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, `CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH`, `CLAUDE_CODE_SKIP_ANTHROPIC_GOOGLE_CLOUD_AUTH`, `CLAUDE_CODE_SKIP_BEDROCK_AUTH`, `CLAUDE_CODE_SKIP_FOUNDRY_AUTH`, `CLAUDE_CODE_SKIP_MANTLE_AUTH`, `CLAUDE_CODE_SKIP_VERTEX_AUTH`, `CLAUDE_CODE_USE_ANTHROPIC_AWS`, `CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_FOUNDRY`, `CLAUDE_CODE_USE_GATEWAY`, `CLAUDE_CODE_USE_MANTLE`, `CLAUDE_CODE_USE_VERTEX`, `CLOUD_ML_REGION` |
 | `codex` | `AWS_BEARER_TOKEN_BEDROCK`, `AWS_PROFILE`, `AWS_REGION`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION`, `AZURE_OPENAI_BASE_URL`, `CODEX_ACCESS_TOKEN`, `CODEX_API_KEY`, `CODEX_AUTHAPI_BASE_URL`, `CODEX_OSS_BASE_URL`, `CODEX_PROVIDER_KEY`, `CODEX_PROVIDER_URL`, `OPENAI_API_BASE`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_FEDERATION_RULE_ID`, `OPENAI_IDENTITY_TOKEN_FILE` |
 | `cursor-agent` | `CURSOR_API_BASE_URL`, `CURSOR_API_ENDPOINT`, `CURSOR_API_KEY`, `CURSOR_API_URL`, `CURSOR_AUTH_TOKEN`, `CURSOR_LOCAL_AGENT_API_KEY` |
@@ -439,7 +450,7 @@ A gateway account points the CLI at an endpoint speaking that CLI's protocol.
 | `mcode` | `openai-gateway`, `anthropic-gateway` | none (`mcode provider list --json` is the catalogue) |
 | `qwen` | `openai-gateway` | `OPENAI_BASE_URL` |
 | `qwen` | `anthropic-gateway`, `gemini-gateway` | `OPENAI_BASE_URL`, which they do not set: their catalogue is the advisory one |
-| `agy` | `env` with `GOOGLE_GEMINI_BASE_URL` | `GOOGLE_GEMINI_BASE_URL` |
+| `agy` | `gemini-gateway`, `openai-gateway` | `GOOGLE_GEMINI_BASE_URL` (neither way sets it: `agy models` is the catalogue) |
 
 A backend with an endpoint variable has its catalogue read from the endpoint when the account
 sets it ([model catalogues](#models-json)). `pi`, `opencode` and `mimo` have none: their models are
