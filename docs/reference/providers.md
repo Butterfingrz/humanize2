@@ -157,7 +157,9 @@ order, then `env` for every backend but `dsh`.
 | | `key` | — | `CURSOR_API_KEY` • | |
 | | `gateway` | — | `CURSOR_API_ENDPOINT`, `CURSOR_API_KEY` • | |
 | `dsh` | `key` | — | `DEEPSEEK_API_KEY` • | |
-| | `gateway` | — | `DEEPSEEK_BASE_URL`, `DEEPSEEK_API_KEY` • | |
+| | `openai-gateway` | — | `DEEPSEEK_BASE_URL` (ending in `/v1`), `DEEPSEEK_API_KEY` •, `DSH_GATEWAY_API` (`openai-completions`; or `openai-responses`) | |
+| | `anthropic-gateway` | — | `DEEPSEEK_BASE_URL` (without `/v1`), `DEEPSEEK_API_KEY` • | |
+| | `gemini-gateway` | — | `DEEPSEEK_BASE_URL` (ending in `/v1beta`), `DEEPSEEK_API_KEY` • | |
 | `grok` | `login` | `grok login` | — | |
 | | `device` | `grok login --device-auth` | — | |
 | | `key` | — | `XAI_API_KEY` • | |
@@ -398,7 +400,7 @@ is left exactly as found. All four apply whichever way the account was made.
 | `claude` | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_AWS_API_KEY`, `ANTHROPIC_AWS_BASE_URL`, `ANTHROPIC_AWS_WORKSPACE_ID`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_BEDROCK_BASE_URL`, `ANTHROPIC_BEDROCK_MANTLE_BASE_URL`, `ANTHROPIC_CONFIG_DIR`, `ANTHROPIC_CUSTOM_HEADERS`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_FOUNDRY_API_KEY`, `ANTHROPIC_FOUNDRY_AUTH_TOKEN`, `ANTHROPIC_FOUNDRY_BASE_URL`, `ANTHROPIC_FOUNDRY_RESOURCE`, `ANTHROPIC_GOOGLE_CLOUD_BASE_URL`, `ANTHROPIC_GOOGLE_CLOUD_LOCATION`, `ANTHROPIC_GOOGLE_CLOUD_PROJECT`, `ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID`, `ANTHROPIC_IDENTITY_TOKEN`, `ANTHROPIC_IDENTITY_TOKEN_FILE`, `ANTHROPIC_MODEL`, `ANTHROPIC_OAUTH_TOKEN`, `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_PROFILE`, `ANTHROPIC_SCOPE`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_VERTEX_BASE_URL`, `ANTHROPIC_VERTEX_PROJECT_ID`, `ANTHROPIC_WORKSPACE_ID`, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_PROFILE`, `AWS_REGION`, `CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR`, `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, `CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH`, `CLAUDE_CODE_SKIP_ANTHROPIC_GOOGLE_CLOUD_AUTH`, `CLAUDE_CODE_SKIP_BEDROCK_AUTH`, `CLAUDE_CODE_SKIP_FOUNDRY_AUTH`, `CLAUDE_CODE_SKIP_MANTLE_AUTH`, `CLAUDE_CODE_SKIP_VERTEX_AUTH`, `CLAUDE_CODE_USE_ANTHROPIC_AWS`, `CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_FOUNDRY`, `CLAUDE_CODE_USE_GATEWAY`, `CLAUDE_CODE_USE_MANTLE`, `CLAUDE_CODE_USE_VERTEX`, `CLOUD_ML_REGION` |
 | `codex` | `CODEX_ACCESS_TOKEN`, `CODEX_API_KEY`, `CODEX_AUTHAPI_BASE_URL`, `CODEX_PROVIDER_KEY`, `CODEX_PROVIDER_URL`, `OPENAI_API_BASE`, `OPENAI_API_KEY`, `OPENAI_BASE_URL` |
 | `cursor-agent` | `CURSOR_API_BASE_URL`, `CURSOR_API_ENDPOINT`, `CURSOR_API_KEY`, `CURSOR_API_URL`, `CURSOR_AUTH_TOKEN`, `CURSOR_LOCAL_AGENT_API_KEY` |
-| `dsh` | `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_SEARCH_BASE_URL` |
+| `dsh` | `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_SEARCH_BASE_URL`, `DSH_GATEWAY_API` |
 | `grok` | `GROK_AUTH`, `GROK_AUTH_PATH`, `GROK_AUTH_PROVIDER_COMMAND`, `GROK_CLI_CHAT_PROXY_BASE_URL`, `GROK_CODE_XAI_API_KEY`, `GROK_DEFAULT_MODEL`, `GROK_MODELS_BASE_URL`, `GROK_MODELS_LIST_URL`, `GROK_OAUTH2_CLIENT_ID`, `GROK_OAUTH2_ISSUER`, `GROK_OIDC_CLIENT_ID`, `GROK_OIDC_ISSUER`, `GROK_XAI_API_BASE_URL`, `XAI_API_KEY` |
 | `kimi` | `KIMI_API_KEY`, `KIMI_BASE_URL`, `KIMI_CODE_BASE_URL`, `KIMI_CODE_CUSTOM_HEADERS`, `KIMI_CODE_OAUTH_HOST`, `KIMI_MODEL_ADAPTIVE_THINKING`, `KIMI_MODEL_API_KEY`, `KIMI_MODEL_BASE_URL`, `KIMI_MODEL_CAPABILITIES`, `KIMI_MODEL_DISPLAY_NAME`, `KIMI_MODEL_MAX_COMPLETION_TOKENS`, `KIMI_MODEL_MAX_CONTEXT_SIZE`, `KIMI_MODEL_MAX_OUTPUT_SIZE`, `KIMI_MODEL_MAX_TOKENS`, `KIMI_MODEL_NAME`, `KIMI_MODEL_PROVIDER_TYPE`, `KIMI_MODEL_REASONING_KEY`, `KIMI_MODEL_TEMPERATURE`, `KIMI_MODEL_THINKING_EFFORT`, `KIMI_MODEL_THINKING_KEEP`, `KIMI_MODEL_TOP_P`, `KIMI_OAUTH_HOST`, `KIMI_REGION`, `KIMI_REGISTRY_API_KEY`, `MOONSHOT_API_KEY` |
 | `mcode` | `MCODE_API_BASE_URL`, `MCODE_AUTH_BASE_URL`, `MCODE_AUTH_PROVIDER`, `MCODE_CLIENT_ID`, `MCODE_GATEWAY_FORMAT`, `MCODE_GATEWAY_MODEL`, `MCODE_GATEWAY_URL`, `MCODE_PROVIDER_API_KEY`, `MCODE_REGION`, `MINIMAX_API_KEY`, `MINIMAX_CN_API_KEY` |
@@ -421,7 +423,7 @@ A gateway account points the CLI at an endpoint speaking that CLI's protocol.
 | | `vertex-gateway` | none (its URL is `ANTHROPIC_VERTEX_BASE_URL`) |
 | `codex` | `gateway` | `CODEX_PROVIDER_URL` |
 | `cursor-agent` | `gateway` | none |
-| `dsh` | `gateway` | `DEEPSEEK_BASE_URL` |
+| `dsh` | `openai-gateway`, `anthropic-gateway`, `gemini-gateway` | `DEEPSEEK_BASE_URL` |
 | `grok` | `gateway` | `GROK_XAI_API_BASE_URL` |
 | `kimi` | `openai-gateway`, `anthropic-gateway`, `gemini-gateway` (and `kimi-key`) | `KIMI_MODEL_BASE_URL` |
 | `mcode` | `gateway` | none (`mcode provider list --json` is the catalogue) |
@@ -443,6 +445,36 @@ account appends, and no `config.toml` is written:
 -c model_providers.humanize.env_key=CODEX_PROVIDER_KEY
 -c model_providers.humanize.wire_api=responses
 ```
+
+A `dsh` gateway is a route of the runtime's generic `@deepseek-ai/dsh-llm-pi-ai` adapter, not
+the DeepSeek adapter, which speaks DeepSeek's own dialect. A turn under a `dsh` gateway account
+adds this to the agent's composition and opens its session on `<route>` instead of
+`deepseek-official`:
+
+```yaml
+- id: llm-pi-ai
+  name: '@deepseek-ai/dsh-llm-pi-ai'
+  config:
+    providers:
+      <route>:
+        apiKeyEnv: DEEPSEEK_API_KEY
+        baseURL: !!js process.env.DEEPSEEK_BASE_URL
+        models:
+        - id: <the agent's model>
+        api: <api>
+```
+
+| Way | `<route>` | `<api>` | Requests go to |
+| --- | --- | --- | --- |
+| `openai-gateway` | `gateway` | `!!js process.env.DSH_GATEWAY_API` | `{base}/chat/completions` or `{base}/responses`, `Authorization: Bearer` |
+| `anthropic-gateway` | `gateway` | `!!js 'anthropic-messages'` | `{base}/v1/messages`, `x-api-key` |
+| `gemini-gateway` | `google` (pi-ai's catalogue route) | omitted | `{base}/models/<model>:streamGenerateContent`, `x-goog-api-key` |
+
+- The agent's effort does not reach a gateway route: the turn runs at the endpoint's default.
+- An agent that may search gets `web_fetch` but no `web_search` under a gateway account:
+  `dsh-web-search-deepseek` is not mounted and `dsh-tool-web` is configured with `search: false`.
+- A `gemini-gateway` endpoint's model list is not in the shape `GET {base}/models` is read
+  for, so its catalogue is the DeepSeek one and the model is typed.
 
 ### Hosts reachable under a cut network
 
