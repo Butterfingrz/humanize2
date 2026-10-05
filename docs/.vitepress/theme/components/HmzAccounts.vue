@@ -17,6 +17,8 @@ import { motion } from '../motion/gsap'
 import { useNarrow } from '../motion/layout'
 import { usePalette } from '../motion/palette'
 import { useScene } from '../motion/useScene'
+import ScenePlane from './scene/ScenePlane.vue'
+import { drawPlane } from './scene/plane'
 
 const BEATS = [
   'Each turn runs as an account',
@@ -167,10 +169,12 @@ const scene = useScene({
     tl.set(one('.tether'), { drawSVG: '0%' }, 0)
     tl.set(bubbles, { autoAlpha: 0, scale: 0.4, transformOrigin: (i: number) => (BUBBLES[i].side === 'in' ? '0% 50%' : '100% 50%') }, 0)
     tl.set(scroll, { y: 0 }, 0)
-    tl.set(q('.dots, .shell, .shield, .unset, .badge, .timer, .again, .next'), { autoAlpha: 0 }, 0)
+    tl.set(q('.dots, .shell, .shield, .unset-in, .badge, .timer, .again-in, .next'), { autoAlpha: 0 }, 0)
     tl.set(q('.kind'), { autoAlpha: 1 }, 0)
     tl.set(one('.strike'), { drawSVG: '0%' }, 0)
     tl.set(one('.timer-fill'), { drawSVG: '0%' }, 0)
+    tl.set(q('.b-times'), { autoAlpha: 0 }, 0)
+    drawPlane(tl, q, 0, { duration: 2.2 })
 
     // ---------------------------------------------------------------- 0 · runs as an account
     tl.addLabel('beat-0', 0)
@@ -201,7 +205,7 @@ const scene = useScene({
     tl.to(key, { x: back.x, y: back.y, rotation: l.vertical ? -6 : 8, duration: 0.6, ease: 'power3.out' }, T1 + 1.55)
     tl.fromTo(thread, { x: 0 }, { keyframes: { x: [0, l.vertical ? 0 : -4, 0], y: [0, l.vertical ? 3 : 0, 0] }, duration: 0.3, ease: 'none', immediateRender: false }, T1 + 1.55)
     tl.to(one('.strike'), { drawSVG: '100%', duration: 0.25 }, T1 + 1.8)
-    tl.fromTo(one('.unset'), { autoAlpha: 0, y: 4 }, { autoAlpha: 1, y: 0, duration: 0.35 }, T1 + 1.95)
+    tl.fromTo(one('.unset-in'), { autoAlpha: 0, y: 4 }, { autoAlpha: 1, y: 0, duration: 0.35 }, T1 + 1.95)
     tl.to(q('.shell, .key'), { autoAlpha: 0, duration: 0.5 }, T1 + 2.9)
     tl.to(bubbles[2], { autoAlpha: 1, scale: 1, duration: 0.45, ease: 'back.out(1.7)' }, T1 + 2.8)
 
@@ -224,9 +228,11 @@ const scene = useScene({
     count(tl, one('.timer-count'), 0, 30, T2 + 1.5, { duration: 1.6, ease: 'none', format: (n) => `${Math.round(n)}s` })
     // Try two: rate-limited again.
     tl.to(timer, { autoAlpha: 0, scale: 0.8, duration: 0.3 }, T2 + 3.2)
-    tl.set(one('.badge-try'), { text: '429 ×2' }, T2 + 3.3)
-    tl.set(one('.badge-try'), { text: '429' }, 0)
-    tl.fromTo(b429, { scale: 1.5 }, { scale: 1, duration: 0.35, ease: 'back.out(2)', immediateRender: false }, T2 + 3.3)
+    // The same answer twice: the badge widens, the code steps aside, and the count arrives.
+    tl.fromTo(one('.badge-pill'), { attr: { x: -24, width: 48 } }, { attr: { x: -31, width: 62 }, duration: 0.4, ease: 'cine' }, T2 + 3.3)
+    tl.fromTo(one('.b-code'), { x: 0 }, { x: -9, duration: 0.4, ease: 'cine' }, T2 + 3.3)
+    tl.fromTo(one('.b-times'), { autoAlpha: 0, x: 8 }, { autoAlpha: 1, x: 0, duration: 0.4, ease: 'cine' }, T2 + 3.35)
+    tl.fromTo(b429, { scale: 1.3 }, { scale: 1, duration: 0.35, ease: 'back.out(2)', immediateRender: false }, T2 + 3.3)
     tl.call(() => fx?.spark(badgeAt(0).x, badgeAt(0).y, palette.danger, 22, 110), [], T2 + 3.35)
     // And on to the next place, in a conversation of its own: what was said is left behind.
     const M1 = T2 + 3.9
@@ -264,7 +270,7 @@ const scene = useScene({
     tl.call(() => fx?.spark(badgeAt(1).x, badgeAt(1).y, palette.danger, 26, 120), [], T3 + 0.4)
     tl.fromTo(card[1], { x: 0 }, { keyframes: { x: [0, -4, 4, -2, 0] }, duration: 0.35, ease: 'none', immediateRender: false }, T3 + 0.4)
     tl.to(q('.kind')[1], { autoAlpha: 0, duration: 0.2 }, T3 + 0.6)
-    tl.fromTo(one('.again'), { autoAlpha: 0, x: -6 }, { autoAlpha: 1, x: 0, duration: 0.35 }, T3 + 0.7)
+    tl.fromTo(one('.again-in'), { autoAlpha: 0, x: -6 }, { autoAlpha: 1, x: 0, duration: 0.35 }, T3 + 0.7)
     const M2 = T3 + 1.0
     tl.to(cam, { ...shot(l.vertical ? 1.08 : 1.22, (cc(2).x + threadC(2).x) / 2 - (l.vertical ? 0 : 60), (cc(2).y + threadC(2).y) / 2), duration: 1.0, ease: 'cine' }, M2)
     glide(2, M2, 0.8)
@@ -321,6 +327,8 @@ const scene = useScene({
           </clipPath>
         </defs>
 
+        <ScenePlane :key="`plane-${narrow}`" :w="L.w" :h="L.h" :step="narrow ? 28 : 32" />
+
         <path v-for="(d, i) in links" :key="`l${i}`" class="link" :d="d" />
         <path v-for="(d, i) in links" :key="`k${i}`" class="link-lit" :class="`lane-${ACCOUNTS[i + 1].lane}`" :d="d" />
 
@@ -331,7 +339,7 @@ const scene = useScene({
             <rect class="card-edge" x="0" y="10" width="3" :height="L.card.h - 20" rx="1.5" />
             <text class="name" x="14" y="26">{{ a.name }}</text>
             <text class="kind" x="14" y="45">{{ a.kind }}</text>
-            <text v-if="i === 1" class="again" x="14" y="45">sign in again</text>
+            <g v-if="i === 1" class="again-in"><text class="again" x="14" y="45">sign in again</text></g>
             <g v-if="i === 0" :transform="`translate(${L.card.w - 26} ${L.card.h / 2 + 6})`">
               <g class="timer">
                 <circle class="timer-track" r="15" />
@@ -341,8 +349,9 @@ const scene = useScene({
             </g>
             <g :transform="`translate(${L.card.w - 26} 0)`">
               <g class="badge" :class="i === 2 ? 'ok' : 'bad'">
-                <rect x="-24" y="-10" width="48" height="20" rx="10" />
-                <text :class="{ 'badge-try': i === 0 }" y="4" text-anchor="middle">{{ ['429', '401', '✓'][i] }}</text>
+                <rect :class="{ 'badge-pill': i === 0 }" x="-24" y="-10" width="48" height="20" rx="10" />
+                <g class="b-code"><text y="4" text-anchor="middle">{{ ['429', '401', '✓'][i] }}</text></g>
+                <g v-if="i === 0" class="b-times"><text x="17" y="4" text-anchor="middle">×2</text></g>
               </g>
             </g>
           </g>
@@ -378,7 +387,7 @@ const scene = useScene({
           <rect class="key-bg" x="0" y="-12" width="162" height="24" rx="7" />
           <text class="key-name" x="81" y="4" text-anchor="middle">ANTHROPIC_API_KEY</text>
           <line class="strike" x1="8" y1="0" x2="154" y2="0" />
-          <text class="unset" x="81" y="30" text-anchor="middle">unset</text>
+          <g class="unset-in"><text class="unset" x="81" y="30" text-anchor="middle">unset</text></g>
         </g>
 
         <g class="next">
@@ -392,6 +401,11 @@ const scene = useScene({
 </template>
 
 <style scoped>
+/* Past its edges, so the paper under it is still there when the camera pulls back. */
+.cam svg {
+  overflow: visible;
+}
+
 .cam svg,
 .cam canvas {
   position: absolute;
@@ -492,7 +506,7 @@ svg {
   font-family: var(--vp-font-family-mono);
   font-size: 11.5px;
   font-weight: 700;
-  fill: #fff;
+  fill: var(--vp-c-bg);
 }
 
 .shell-bg {
