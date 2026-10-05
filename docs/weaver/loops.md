@@ -25,10 +25,10 @@ alone. This is a **Ralph loop**. Before the loop, every round is one more turn o
 conversation:
 
 ```python
-session = await agent.spawn(env=workspace)  # [!code ++]
+session = await agent.spawn()  # [!code ++]
 while True:
-    session = await agent.spawn(env=workspace)  # [!code --]
-    await agent.run(task, session=session)
+    session = await agent.spawn()  # [!code --]
+    await agent.run(task, session=session, env=workspace)
 ```
 
 | | `spawn` inside the loop | `spawn` before it |
@@ -124,9 +124,9 @@ async def checklist(
         rounds += 1
         state["rounds"] = rounds  # ⑥
         print(f"round {rounds}")
-        session = await agent.spawn(env=workspace)  # ⑦
+        session = await agent.spawn()  # ⑦
         try:
-            await agent.run(task, session=session)
+            await agent.run(task, session=session, env=workspace)
         except HarnessError as error:  # ⑧
             print(f"round {rounds} failed: {error}")
             continue
@@ -309,6 +309,8 @@ from hmz.flows import (
     FlowContext,
     FlowParams,
     HarnessError,
+    HarnessNotInstalled,
+    HarnessSandboxed,
     LocalEnv,
     flow,
 )
@@ -337,12 +339,14 @@ async def ralph_loop(
     while True:  # ①
         state["rounds"] = rounds = (state["rounds"] if "rounds" in state else 0) + 1  # ②
         print(f"round {rounds}")
-        session = await agent.spawn(env=envs["workspace"])
+        session = await agent.spawn()
         try:
-            answered = await agent.run(task, session=session)
+            answered = await agent.run(task, session=session, env=envs["workspace"])
+        except (HarnessNotInstalled, HarnessSandboxed):
+            raise  # ③
         except HarnessError as error:
             print(f"round {rounds} failed: {error}")
-            answered = ""  # ③
+            answered = ""
         stalled = 0 if answered else stalled + 1  # ④
         if stalled >= STALLED:
             print(f"stopping: {stalled} rounds in a row answered with nothing")
@@ -354,7 +358,10 @@ async def ralph_loop(
    would be content to spend in full.
 2. **The round count** lives in `ctx.state`, as in `checklist`, so `--resume` counts on.
 3. **A failed turn is a round answered with nothing**, rather than a skipped one, so a CLI that
-   fails every time counts towards the stall.
+   fails every time counts towards the stall. A CLI that cannot be started in the workspace at
+   all -- not installed there, or unable to hold its sandbox -- ends the run instead: a
+   session's CLI starts at its first turn, so that is where it says so, and no round would
+   start it.
 4. **Three empty rounds in a row end it.** `run` returns what the agent said, and an agent with
    nothing left to say, or a CLI failing every time, is a loop with nothing more to do.
 5. **`asyncio.sleep(PAUSE)`** waits five seconds between rounds, which gives a throttled
@@ -374,8 +381,8 @@ with the right one. Abridged:
 chasers = (agents["first_chaser"], agents["second_chaser"])
 at = (state["turn"] if "turn" in state else 0) % len(chasers)
 while True:
-    session = await chasers[at].spawn(env=envs["workspace"])
-    await chasers[at].run(task, session=session)
+    session = await chasers[at].spawn()
+    await chasers[at].run(task, session=session, env=envs["workspace"])
     at = (at + 1) % len(chasers)
     state["turn"] = at
 ```

@@ -184,7 +184,7 @@ review its own work in the same conversation:
 
 ::: code-group
 
-```python{6,19,21-23} [.hmz/flows/twice/__init__.py]
+```python{6,19,21-25} [.hmz/flows/twice/__init__.py]
 from hmz.flows import Agent, AgentCollection, EnvCollection, FlowContext, FlowParams
 from hmz.flows import LocalEnv, flow
 
@@ -202,11 +202,13 @@ async def twice(
     task: str, *, agents: Agents, envs: Envs, params: FlowParams, ctx: FlowContext
 ) -> None:
     """Does the work, then reads it back and fixes what is wrong."""
-    builder = agents["builder"]
-    session = await builder.spawn(env=envs["workspace"])  # one conversation
-    await builder.run(task, session=session)
+    builder, workspace = agents["builder"], envs["workspace"]
+    session = await builder.spawn()  # one conversation
+    await builder.run(task, session=session, env=workspace)  # a turn, in the workspace
     await builder.run(  # the same one, so this turn remembers the last
-        "Now review what you just did, and fix anything that is wrong.", session=session
+        "Now review what you just did, and fix anything that is wrong.",
+        session=session,
+        env=workspace,
     )
 ```
 
