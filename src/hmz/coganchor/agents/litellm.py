@@ -28,6 +28,7 @@ import contextlib
 import importlib
 import json
 import os
+import socket
 import sys
 import time
 import uuid
@@ -217,6 +218,10 @@ class LiteLLMSession(SessionBase):
                         usage = spent
                     if self._cut:
                         break
+                # Its socket shut under it, the read can end as cleanly as a finished answer
+                # does: a turn the watchdog gave up on is not one that finished, and is
+                # raised here for the watchdog to say what it failed with.
+                _unless_wedged(self, model)
             if usage.total:
                 self._spends(usage)
             said = list(saying.rest())
@@ -285,9 +290,22 @@ class LiteLLMSession(SessionBase):
         return {**asked, "content": asked["content"] + _IN_SHAPE.format(schema=shape)}
 
     def _cuts(self) -> None:
-        """Closes the answer being streamed, which is what stops the turn now."""
+        """Closes the answer being streamed, which is what stops the turn now.
+
+        The socket under it is shut first: closing the stream from this thread does not wake
+        the turn's own, which is blocked reading that socket, and an endpoint gone silent
+        would hold it there for as long as the request's timeout.
+        """
         live = self._live
-        for holder in (live, _field(live, "completion_stream")):
+        stream = _field(live, "completion_stream")
+        held = _field(_field(stream, "response"), "extensions")
+        wire = _mapping(held).get("network_stream")
+        info = getattr(wire, "get_extra_info", None)
+        sock = info("socket") if callable(info) else None
+        if isinstance(sock, socket.socket):
+            with contextlib.suppress(OSError):
+                sock.shutdown(socket.SHUT_RDWR)
+        for holder in (live, stream):
             close = getattr(holder, "close", None)
             if callable(close):
                 with contextlib.suppress(Exception):
@@ -460,6 +478,12 @@ def _litellm() -> _LiteLLM:
             raise
         raise ModuleNotFoundError(_EXTRA) from why
     return cast("_LiteLLM", module)
+
+
+def _unless_wedged(session: LiteLLMSession, model: str) -> None:
+    """Raises for a turn the watchdog gave up on, however its read ended."""
+    if session._wedged:
+        raise OSError(f"litellm: {model} stopped answering")
 
 
 def _field(held: object, name: str) -> object:
