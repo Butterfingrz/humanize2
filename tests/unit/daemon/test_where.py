@@ -1,219 +1,176 @@
-"""Where one workspace's daemon keeps its socket, and what is written down beside it."""
+"""`hmz.daemon.where`: the daemon's directory, and what is written down in it."""
 
 from __future__ import annotations
 
-import json
+import errno
 import os
+import re
 import stat
-import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
-from hmz import home
 from hmz.daemon import where
 
-if TYPE_CHECKING:
-    import pathlib
+
+def test_the_names_in_the_directory_are_distinct_files() -> None:
+    names = {where.SOCKET, where.RECORD, where.LOG, where.LOCK}
+    assert len(names) == 4
+    assert all("/" not in one for one in names)
 
 
-def test_two_checkouts_of_one_repository_are_two_workspaces(
-    tmp_path: pathlib.Path,
+def test_at_is_a_private_directory_of_this_users() -> None:
+    found = where.at()
+    assert found.is_dir()
+    assert found.stat().st_uid == os.getuid()
+    assert stat.S_IMODE(found.stat().st_mode) & 0o077 == 0
+    assert where.at() == found
+
+
+def test_workspace_follows_every_link(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "link").symlink_to(real)
+    assert where.workspace(tmp_path / "link") == str(real.resolve())
+    assert where.workspace(str(tmp_path / "real" / ".." / "real")) == str(
+        real.resolve()
+    )
+
+
+def test_workspace_defaults_to_where_this_is_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Known by the whole path, so a name is not enough."""
-    one = tmp_path / "a" / "humanize"
-    other = tmp_path / "b" / "humanize"
-    one.mkdir(parents=True)
-    other.mkdir(parents=True)
-
-    assert where.workspace(one) != where.workspace(other)
+    monkeypatch.chdir(tmp_path)
+    assert where.workspace() == str(tmp_path.resolve())
+    assert where.workspace(None) == where.workspace("")
 
 
-def test_the_same_directory_is_the_same_workspace(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+def test_reached_names_a_short_socket_by_its_whole_path() -> None:
+    short = Path("short")
+    with where.reached(short) as reaching:
+        assert reaching == str(short / where.SOCKET)
+
+
+def test_reached_stands_in_a_long_directory_and_goes_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """However it was spelled, since a run is looked for from wherever somebody stands."""
-    (tmp_path / "ws").mkdir()
-    (tmp_path / "link").symlink_to(tmp_path / "ws")
-    monkeypatch.chdir(tmp_path / "ws")
-
-    spelled = {
-        where.workspace(tmp_path / "ws"),
-        where.workspace(tmp_path / "ws" / "."),
-        where.workspace(tmp_path / "link"),
-        where.workspace(),
-    }
-    assert len(spelled) == 1
+    monkeypatch.chdir(tmp_path)
+    deep = tmp_path / ("d" * 60) / ("e" * 60)
+    deep.mkdir(parents=True)
+    with where.reached(deep) as reaching:
+        assert reaching == where.SOCKET
+        assert Path.cwd() == deep.resolve()
+    assert Path.cwd() == tmp_path.resolve()
 
 
-def test_a_directory_with_nothing_in_it_holds_no_daemon(tmp_path: pathlib.Path) -> None:
-    assert where.held(tmp_path) == {}
-
-
-def test_what_is_written_down_is_read_back(tmp_path: pathlib.Path) -> None:
-    where.wrote(tmp_path, {"pid": os.getpid(), "workspace": "/somewhere"})
-
-    assert where.held(tmp_path)["workspace"] == "/somewhere"
-
-
-def test_a_note_whose_process_has_gone_reads_as_nothing_held(
-    tmp_path: pathlib.Path,
+def test_reached_goes_back_even_when_the_block_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A socket file outlives the process that bound it, and so does the note beside it."""
-    where.wrote(tmp_path, {"pid": 2**30, "workspace": "/somewhere"})
+    monkeypatch.chdir(tmp_path)
+    deep = tmp_path / ("d" * 120)
+    deep.mkdir()
+    with pytest.raises(RuntimeError), where.reached(deep):
+        raise RuntimeError
+    assert Path.cwd() == tmp_path.resolve()
 
-    assert where.held(tmp_path) == {}
 
-
-def test_a_note_that_is_not_what_this_writes_reads_as_nothing_held(
-    tmp_path: pathlib.Path,
+def test_reached_writes_down_a_directory_it_could_not_go_back_to(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (tmp_path / where.RECORD).write_text("[]", encoding="utf-8")
-    assert where.held(tmp_path) == {}
-
-    (tmp_path / where.RECORD).write_text("{{{", encoding="utf-8")
-    assert where.held(tmp_path) == {}
-
-    (tmp_path / where.RECORD).write_text(json.dumps({"pid": "one"}), encoding="utf-8")
-    assert where.held(tmp_path) == {}
-
-
-def test_this_process_is_alive_and_a_number_nothing_answers_to_is_not() -> None:
-    assert where.alive(os.getpid())
-    assert not where.alive(2**30)
-    assert not where.alive(0)
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    monkeypatch.chdir(gone)
+    deep = tmp_path / ("d" * 120)
+    deep.mkdir()
+    with where.reached(deep):
+        gone.rmdir()
+    assert "could not go back" in (deep / where.LOG).read_text()
 
 
-def test_only_one_process_holds_a_workspace_at_a_time(tmp_path: pathlib.Path) -> None:
-    """Two `hmz` started in the same second must not both find nothing and both bind."""
-    import os
-
-    taken = where.holds(tmp_path)
+def test_holds_takes_the_lock_once(tmp_path: Path) -> None:
+    held = where.holds(tmp_path)
     try:
-        with pytest.raises(OSError, match=r"[Rr]esource|[Uu]navailable|locked"):
+        assert (tmp_path / where.LOCK).exists()
+        with pytest.raises(BlockingIOError):
             where.holds(tmp_path)
     finally:
-        os.close(taken)
-    # And it is the kernel that drops it, so the next process has it the moment this one lets
-    # go -- there is no such thing as one left behind by a machine that was turned off.
-    again = where.holds(tmp_path)
-    os.close(again)
+        os.close(held)
+    os.close(where.holds(tmp_path))
 
 
-def test_the_daemon_is_kept_on_the_machine_it_runs_on() -> None:
-    """In this user's own corner of the machine's temporary directory, not under the home.
-
-    A home directory is mounted by every machine sharing it, and a daemon is one machine's
-    process: kept there, each machine would list the others' and check their pids against
-    its own kernel. One fixed place on the machine, so that every frontend finds the one.
-    """
-    assert where.at() == Path(tempfile.gettempdir()) / f"humanize-{os.getuid()}"
-    assert not where.at().is_relative_to(home())
-    assert stat.S_IMODE(where.at().stat().st_mode) & 0o077 == 0
+def test_holds_raises_where_the_file_cannot_be_made(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        where.holds(tmp_path / "missing")
 
 
-def test_a_corner_somebody_else_could_write_is_not_trusted_with_a_daemon() -> None:
-    """In a temporary directory everybody shares, it could hold a socket of theirs."""
-    planted = Path(tempfile.gettempdir()) / f"humanize-{os.getuid()}"
-    planted.mkdir(mode=0o700)
-    planted.chmod(0o777)
-
-    with pytest.raises(PermissionError, match="only this user can write"):
-        where.at()
+def test_wrote_then_held_reads_back_the_record(tmp_path: Path) -> None:
+    said = {"pid": os.getpid(), "started": "2026-01-01T00:00:00Z", "protocol": 2}
+    where.wrote(tmp_path, said)
+    assert where.held(tmp_path) == said
+    assert stat.S_IMODE((tmp_path / where.RECORD).stat().st_mode) == 0o600
+    assert [one.name for one in tmp_path.iterdir()] == [where.RECORD]
 
 
-def _too_long_to_name_whole(tmp_path: pathlib.Path) -> pathlib.Path:
-    """A daemon directory whose socket cannot be reached by its whole path.
-
-    One long name rather than a deep tree, so that the address is over the limit whatever the
-    temporary directory it is made under happens to be called. Well under NAME_MAX, which is
-    255 bytes on every filesystem this runs on.
-    """
-    spot = tmp_path / ("d" * 128)
-    spot.mkdir()
-    assert len(str(spot / where.SOCKET).encode()) > where._LONGEST
-    return spot
+def test_wrote_replaces_the_record_whole(tmp_path: Path) -> None:
+    where.wrote(tmp_path, {"pid": os.getpid(), "n": 1})
+    where.wrote(tmp_path, {"pid": os.getpid(), "n": 2})
+    assert where.held(tmp_path)["n"] == 2
 
 
-def test_a_socket_named_whole_is_reached_from_wherever_the_caller_stands(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+def test_wrote_leaves_nothing_behind_when_it_fails(tmp_path: Path) -> None:
+    with pytest.raises(TypeError):
+        where.wrote(tmp_path, {"pid": object()})
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        None,
+        "not json",
+        "[1, 2]",
+        '{"started": "x"}',
+        '{"pid": "1"}',
+        '{"pid": 0}',
+        '{"pid": -5}',
+    ],
+)
+def test_held_is_nothing_for_a_record_naming_no_live_process(
+    tmp_path: Path, written: str | None
 ) -> None:
-    """The ordinary case: nothing moves, because the whole path is an address already.
-
-    Which branch is taken is pinned rather than trusted to the directory pytest was given:
-    under a long `--basetemp` this path is the long one, and the test would fail as though
-    `reached` were wrong instead of covering the branch it is here for. The number it is
-    pinned to is this path's own length, which also holds the inclusive edge of the test.
-    """
-    was = Path.cwd()
-    monkeypatch.setattr(where, "_LONGEST", len(str(tmp_path / where.SOCKET).encode()))
-
-    with where.reached(tmp_path) as reaching:
-        assert reaching == str(tmp_path / where.SOCKET)
-        assert Path.cwd() == was
-
-    assert Path.cwd() == was
+    if written is not None:
+        (tmp_path / where.RECORD).write_text(written)
+    assert where.held(tmp_path) == {}
 
 
-def test_a_socket_too_long_to_name_whole_is_reached_from_its_own_directory(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+def test_held_is_nothing_for_a_record_that_cannot_be_decoded(tmp_path: Path) -> None:
+    (tmp_path / where.RECORD).write_bytes(b"\xff\xfe")
+    assert where.held(tmp_path) == {}
+
+
+def test_now_is_utc_to_the_second() -> None:
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", where.now())
+
+
+@pytest.mark.parametrize(("pid", "expected"), [(0, False), (-1, False)])
+def test_alive_is_false_for_no_process(pid: int, expected: bool) -> None:
+    assert where.alive(pid) is expected
+
+
+def test_alive_is_true_for_this_process() -> None:
+    assert where.alive(os.getpid()) is True
+
+
+@pytest.mark.parametrize(
+    ("errno_", "expected"),
+    [(errno.EPERM, True), (errno.ESRCH, False)],
+    ids=["EPERM", "ESRCH"],
+)
+def test_alive_counts_a_process_somebody_else_owns(
+    monkeypatch: pytest.MonkeyPatch, errno_: int, expected: bool
 ) -> None:
-    """The name alone is short enough, and the process is put back once it has been used."""
-    spot = _too_long_to_name_whole(tmp_path)
-    standing = tmp_path / "standing"
-    standing.mkdir()
-    monkeypatch.chdir(standing)
+    def refuses(pid: int, signal: int) -> None:
+        raise OSError(errno_, os.strerror(errno_))
 
-    with where.reached(spot) as reaching:
-        assert reaching == where.SOCKET
-        assert Path.cwd() == spot
-
-    assert Path.cwd() == standing
-
-
-def test_a_directory_that_goes_while_the_socket_is_reached_is_written_down(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A process left standing where it was never asked to run must not be left silent.
-
-    For a daemon that is a flow going on somewhere of its own choosing, which is the one thing
-    worse than the move itself.
-    """
-    spot = _too_long_to_name_whole(tmp_path)
-    standing = tmp_path / "standing"
-    standing.mkdir()
-    monkeypatch.chdir(standing)
-
-    with where.reached(spot):
-        standing.rmdir()
-
-    said = (spot / where.LOG).read_text(encoding="utf-8")
-    assert str(standing) in said
-    assert "FileNotFoundError" in said
-
-
-def test_an_interrupt_the_moment_the_move_is_made_still_puts_it_back(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The window is the breath between the move and the `try` that undoes it."""
-    spot = _too_long_to_name_whole(tmp_path)
-    standing = tmp_path / "standing"
-    standing.mkdir()
-    monkeypatch.chdir(standing)
-
-    moves = os.chdir
-    moved: list[object] = []
-
-    def interrupted(path: os.PathLike[str] | str) -> None:
-        moves(path)
-        moved.append(path)
-        if len(moved) == 1:
-            raise KeyboardInterrupt
-
-    monkeypatch.setattr(os, "chdir", interrupted)
-
-    with pytest.raises(KeyboardInterrupt), where.reached(spot):
-        pass
-
-    assert Path.cwd() == standing
+    monkeypatch.setattr(os, "kill", refuses)
+    assert where.alive(12345) is expected

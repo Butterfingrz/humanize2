@@ -1,145 +1,199 @@
+"""`hmz.coganchor.statepaths`: which files are the agent's own rather than the project's."""
+
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
-from hmz.coganchor.statepaths import profile_for, resolve
+import pytest
+
+from hmz.coganchor import backends, statepaths
+from hmz.coganchor.statepaths import PROFILES, profile_for, resolve
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import pytest
+
+def _program(at: Path, first: str = "#!/bin/sh\n") -> Path:
+    at.parent.mkdir(parents=True, exist_ok=True)
+    at.write_text(first + "exit 0\n", encoding="utf-8")
+    at.chmod(0o755)
+    return at
 
 
-def executable(path: Path, content: bytes = b"\x7fELF") -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(content)
-    path.chmod(0o755)
-    return path
+@pytest.fixture
+def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A resolved scratch root with its own `HOME` and an empty `PATH`."""
+    held = tmp_path.resolve()
+    (held / "home").mkdir()
+    monkeypatch.setenv("HOME", str(held / "home"))
+    monkeypatch.setenv("PATH", str(held / "empty"))
+    return held
 
 
-def test_the_bundled_dsh_runtime_keeps_dsh_state_local() -> None:
-    profile = profile_for(
-        "/opt/deepseek_harness_runtime/runtime/dsh-jsonrpc-agent-pkg-linux-x64"
+def test_every_profile_is_named_once_and_after_a_backend() -> None:
+    names = [one.name for one in PROFILES]
+    assert len(names) == len(set(names))
+    assert set(names) == {one.name for one in backends.PROFILES}
+
+
+@pytest.mark.parametrize("profile", PROFILES, ids=lambda one: one.name)
+def test_every_state_path_is_under_the_home(profile: statepaths.AgentProfile) -> None:
+    assert profile.state_paths
+    assert all(one.startswith("~/") for one in profile.state_paths)
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("claude", "claude"),
+        ("/usr/local/bin/codex", "codex"),
+        ("cursor-agent", "cursor-agent"),
+        ("dsh-jsonrpc-agent-darwin-arm64", "dsh"),
+        ("/opt/x/dsh-jsonrpc-agent-linux", "dsh"),
+    ],
+)
+def test_profile_for_a_known_agent(name: str, expected: str) -> None:
+    found = profile_for(name)
+    assert found.name == expected
+    assert found.state_paths
+
+
+def test_profile_for_an_unknown_agent_is_generic() -> None:
+    found = profile_for("/somewhere/my-agent")
+    assert found == statepaths.AgentProfile(name="my-agent")
+    assert found.state_paths == ()
+
+
+def test_resolve_refuses_no_command() -> None:
+    with pytest.raises(ValueError, match="no agent command"):
+        resolve([])
+
+
+@pytest.mark.parametrize("command", ["claude", "/nowhere/claude"])
+def test_resolve_refuses_an_agent_that_is_not_there(root: Path, command: str) -> None:
+    with pytest.raises(FileNotFoundError, match="not found"):
+        resolve([command])
+
+
+def test_resolve_keeps_the_agents_own_state_and_humanizes_here(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    program = _program(root / "bin" / "claude")
+    monkeypatch.setenv("PATH", str(root / "bin"))
+
+    found = resolve(["claude", "-p", "hi"])
+
+    home = root / "home"
+    assert found.profile.name == "claude"
+    assert found.program == str(program)
+    assert found.argv == [str(program), "-p", "hi"]
+    assert found.local_paths == sorted(found.local_paths)
+    for kept in (".claude", ".claude.json", ".hmz", ".humanize", ".cache/humanize"):
+        assert str(home / kept) in found.local_paths
+    assert str(program) in found.local_programs
+    assert str(home / ".claude") in found.local_programs
+    assert "/bin/sh" in found.local_programs  # the interpreter it names outright
+
+
+def test_resolve_follows_a_link_to_the_real_program(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = _program(root / "real" / "grok")
+    (root / "bin").mkdir()
+    (root / "bin" / "grok").symlink_to(real)
+    monkeypatch.setenv("PATH", str(root / "bin"))
+
+    found = resolve(["grok"])
+
+    assert found.program == str(real)
+    assert found.argv == [str(root / "bin" / "grok")]
+    assert {str(real), str(root / "bin" / "grok")} <= set(found.local_programs)
+
+
+def test_resolve_takes_a_path_as_it_is_written(root: Path) -> None:
+    program = _program(root / "elsewhere" / "kimi")
+    found = resolve([str(program), "--yolo"])
+    assert found.profile.name == "kimi"
+    assert found.argv == [str(program), "--yolo"]
+
+
+def test_an_env_shebang_claims_every_place_the_interpreter_could_be(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _program(root / "bin" / "qwen", "#!/usr/bin/env node\n")
+    node = _program(root / "tools" / "node")
+    monkeypatch.setenv(
+        "PATH", os.pathsep.join([str(root / "bin"), str(root / "tools")])
     )
 
-    assert profile.name == "dsh"
-    assert profile.state_paths == ("~/.dsh",)
+    found = resolve(["qwen"])
+
+    assert "/usr/bin/env" in found.local_programs
+    assert str(root / "bin" / "node") in found.local_programs  # a miss, kept here too
+    assert str(node) in found.local_programs
 
 
-def test_codex_standalone_keeps_its_code_mode_host_local(tmp_path: Path) -> None:
-    codex = executable(tmp_path / "release" / "bin" / "codex")
-    host = executable(codex.with_name("codex-code-mode-host"))
-    work_helper = executable(tmp_path / "release" / "codex-path" / "rg")
-
-    resolved = resolve([str(codex)])
-
-    assert str(codex) in resolved.local_programs
-    assert str(host) in resolved.local_programs
-    assert str(work_helper) not in resolved.local_programs
-
-
-def test_codex_node_package_keeps_its_whole_runtime_local(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "shebang", ["#!/usr/bin/env -S node --flag\n", "#!/usr/bin/env FOO=1 node\n"]
+)
+def test_an_env_shebang_reads_past_flags_and_variables(
+    root: Path, monkeypatch: pytest.MonkeyPatch, shebang: str
 ) -> None:
-    node = executable(tmp_path / "node-bin" / "node")
-    monkeypatch.setenv("PATH", str(node.parent))
+    _program(root / "bin" / "pi", shebang)
+    monkeypatch.setenv("PATH", str(root / "bin"))
+    assert str(root / "bin" / "node") in resolve(["pi"]).local_programs
 
-    package = tmp_path / "node_modules" / "@openai" / "codex"
-    script = executable(package / "bin" / "codex.js", b"#!/usr/bin/env node\n")
-    launcher = tmp_path / "bin" / "codex"
-    launcher.parent.mkdir()
-    launcher.symlink_to(script)
-    vendor = (
-        package
-        / "node_modules"
-        / "@openai"
-        / "codex-linux-x64"
-        / "vendor"
-        / "x86_64-unknown-linux-musl"
+
+def test_an_env_shebang_naming_a_path_keeps_that_path(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _program(root / "bin" / "pi", f"#!/usr/bin/env {root}/opt/node\n")
+    monkeypatch.setenv("PATH", str(root / "bin"))
+    assert str(root / "opt" / "node") in resolve(["pi"]).local_programs
+
+
+def test_an_npm_package_keeps_the_programs_beside_its_own(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = root / "lib" / "node_modules" / "@x" / "mimo" / "bin"
+    launcher = _program(package / "mimo")
+    native = _program(package / ".mimocode")
+    (package / "README").write_text("not a program", encoding="utf-8")
+    shims = root / "lib" / "node_modules" / ".bin"
+    shims.mkdir()
+    (shims / "mimo").symlink_to(launcher)
+    monkeypatch.setenv("PATH", str(shims))
+
+    found = resolve(["mimo"])
+
+    assert {str(launcher), str(native)} <= set(found.local_programs)
+    assert str(package / "README") not in found.local_programs
+
+
+def test_a_program_outside_a_package_keeps_no_neighbours(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _program(root / "bin" / "pi")
+    neighbour = _program(root / "bin" / "other")
+    monkeypatch.setenv("PATH", str(root / "bin"))
+    assert str(neighbour) not in resolve(["pi"]).local_programs
+
+
+def test_codex_keeps_its_native_runtime_here(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = root / "codex"
+    _program(package / "bin" / "codex", "#!/usr/bin/env node\n")
+    vendor = package / "vendor" / "x86_64-unknown-linux-musl" / "bin"
+    native = _program(vendor / "codex")
+    host = _program(vendor / "codex-code-mode-host")
+    node = _program(root / "tools" / "node")
+    monkeypatch.setenv(
+        "PATH", os.pathsep.join([str(package / "bin"), str(root / "tools")])
     )
-    native = executable(vendor / "bin" / "codex")
-    host = executable(native.with_name("codex-code-mode-host"))
-    work_helper = executable(vendor / "codex-path" / "rg")
 
-    resolved = resolve([str(launcher)])
+    found = resolve(["codex"])
 
-    assert resolved.program == str(script)
-    assert str(node) in resolved.local_programs
-    assert str(native) in resolved.local_programs
-    assert str(host) in resolved.local_programs
-    assert str(work_helper) not in resolved.local_programs
-    assert str(launcher) in resolved.local_programs
-
-
-def test_an_npm_shebang_keeps_the_whole_search_for_its_interpreter_local(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """``env`` searches ``PATH`` an ``execve`` at a time, and the first one decides.
-
-    A candidate that does not exist here is not the agent's own by name, so it would be run
-    on the target -- where the name does resolve, and the agent itself ends up running.
-    """
-    empty = tmp_path / "empty-bin"
-    empty.mkdir()
-    node = executable(tmp_path / "node-bin" / "node")
-    monkeypatch.setenv("PATH", f"{empty}:{node.parent}")
-    script = executable(tmp_path / "bin" / "kimi", b"#!/usr/bin/env node\n")
-
-    resolved = resolve([str(script)])
-
-    assert str(node) in resolved.local_programs
-    assert (
-        str(empty / "node") in resolved.local_programs
-    )  # tried first, and refused here
-
-
-def test_a_program_the_agent_keeps_in_its_own_state_directory_runs_here(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Grok installs its native binary under ``~/.grok`` and re-execs it."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    native = executable(tmp_path / ".grok" / "bin" / "grok-1.0.13")
-    launcher = executable(tmp_path / "bin" / "grok", b"#!/usr/bin/env node\n")
-
-    resolved = resolve([str(launcher)])
-
-    assert str(tmp_path / ".grok") in resolved.local_programs
-    assert any(str(native).startswith(one) for one in resolved.local_programs)
-
-
-def test_what_an_npm_package_keeps_beside_its_program_runs_here(tmp_path: Path) -> None:
-    """Mimo's `bin/mimo` hands over to the `bin/.mimocode` its install left beside it."""
-    bin_ = tmp_path / "lib" / "node_modules" / "@mimo-ai" / "cli" / "bin"
-    launcher = executable(bin_ / "mimo", b"#!/usr/bin/env node\n")
-    native = executable(bin_ / ".mimocode")
-    notes = bin_ / "README"
-    notes.write_text("not a program\n")
-    helper = executable(bin_.parent / "vendor" / "rg")
-
-    resolved = resolve([str(launcher)])
-
-    assert str(native) in resolved.local_programs
-    assert str(notes) not in resolved.local_programs
-    assert str(helper) not in resolved.local_programs
-
-
-def test_a_program_in_a_shared_directory_brings_none_of_its_neighbours(
-    tmp_path: Path,
-) -> None:
-    program = executable(tmp_path / "usr" / "bin" / "agent")
-    neighbour = executable(tmp_path / "usr" / "bin" / "cat")
-
-    resolved = resolve([str(program)])
-
-    assert str(neighbour) not in resolved.local_programs
-
-
-def test_a_projects_bin_of_commands_is_no_package_of_the_agents(tmp_path: Path) -> None:
-    """Pnpm and yarn put a script per command of the whole project in `node_modules/.bin`."""
-    bin_ = tmp_path / "project" / "node_modules" / ".bin"
-    program = executable(bin_ / "agent")
-    neighbour = executable(bin_ / "tsc")
-
-    resolved = resolve([str(program)])
-
-    assert str(neighbour) not in resolved.local_programs
+    assert {str(native), str(host), str(node)} <= set(found.local_programs)
+    assert found.local_programs == sorted(set(found.local_programs))

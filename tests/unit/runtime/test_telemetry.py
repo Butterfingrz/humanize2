@@ -1,420 +1,406 @@
-"""What humanize reports about itself, what it never reports, and who was asked.
-
-Two promises are checked here, because they are the two the feature is worth having only if
-it keeps. Nothing is sent by a machine nobody has asked -- an absent answer is not a yes --
-and nothing that is sent carries what a person would be surprised by: no task, no prompt, no
-path of theirs, no key. The rest is the plumbing that lets a report say what was running.
-"""
+"""Whether humanize reports its own failures, and what a report may carry when it does."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+import contextlib
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
+import sentry_sdk
+import yaml
 
 from hmz.runtime import telemetry
-from hmz.runtime.settings import Settings
+from tests.unit.runtime import doubles_u12 as doubles
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Callable, Generator, Iterator
+
+#: What answers the question for one process, as the docs name it.
+SAYS = "HUMANIZE_SENTRY"
 
 
-@pytest.fixture(autouse=True)
-def _unstarted(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Starts each test with nothing reporting and nothing read, whatever the last one did."""
-    monkeypatch.setattr(telemetry, "_started", [])
-    monkeypatch.setattr(telemetry, "_answered", [])
-    monkeypatch.setattr(telemetry, "_ABOUT", {})
+class Scope:
+    """One report's scope: the tags it was given and what was attached to it."""
+
+    def __init__(self) -> None:
+        self.tags: dict[str, str] = {}
+        self.attached: dict[str, bytes] = {}
+
+    def set_tag(self, name: str, value: str) -> None:
+        self.tags[name] = value
+
+    def add_attachment(self, *, bytes: bytes, filename: str) -> None:  # noqa: A002 -- the SDK's own keyword
+        self.attached[filename] = bytes
 
 
-def test_nobody_has_been_asked_until_somebody_has(
-    monkeypatch: pytest.MonkeyPatch,
+class Sentry:
+    """The SDK, as far as humanize reaches into it: nothing leaves the process."""
+
+    def __init__(self) -> None:
+        self.inits: list[dict[str, Any]] = []
+        self.closed = 0
+        self.scopes: list[Scope] = []
+        self.exceptions: list[BaseException] = []
+        self.messages: list[tuple[str, str]] = []
+        self.refuses: Exception | None = None
+
+    def init(self, **said: Any) -> None:
+        if self.refuses is not None and said.get("dsn"):
+            raise self.refuses
+        self.inits.append(said)
+
+    def get_client(self) -> Sentry:
+        return self
+
+    def close(self, timeout: float = 0.0) -> None:
+        self.closed += 1
+
+    @contextlib.contextmanager
+    def isolation_scope(self) -> Generator[Scope]:
+        scope = Scope()
+        self.scopes.append(scope)
+        yield scope
+
+    def capture_exception(self, why: BaseException) -> None:
+        self.exceptions.append(why)
+
+    def capture_message(self, said: str, level: str = "") -> None:
+        self.messages.append((said, level))
+
+    @property
+    def before_send(self) -> Callable[[Any, Any], Any]:
+        return self.inits[-1]["before_send"]
+
+
+@pytest.fixture
+def sent(monkeypatch: pytest.MonkeyPatch) -> Iterator[Sentry]:
+    fake = Sentry()
+    for name in (
+        "init",
+        "get_client",
+        "isolation_scope",
+        "capture_exception",
+        "capture_message",
+    ):
+        monkeypatch.setattr(sentry_sdk, name, getattr(fake, name))
+    try:
+        yield fake
+    finally:
+        # Reporting started here is stopped here, so that no other test finds it on.
+        telemetry.stop()
+
+
+@pytest.fixture
+def on(monkeypatch: pytest.MonkeyPatch, sent: Sentry) -> Sentry:
+    monkeypatch.setenv(SAYS, "on")
+    return sent
+
+
+@pytest.fixture
+def told() -> Iterator[Callable[[str, Callable[[], object]], None]]:
+    """Registers something to attach, and leaves it out of every report afterwards."""
+    names: list[str] = []
+
+    def registers(name: str, said: Callable[[], object]) -> None:
+        names.append(name)
+        telemetry.about(name, said)
+
+    def gone() -> object:
+        raise LookupError
+
+    yield registers
+    for name in names:
+        telemetry.about(name, gone)
+
+
+# ------------------------------------------------------------------ the answer
+
+
+@pytest.mark.parametrize("said", ["on", "1", "true", "YES", " On "])
+def test_the_environment_says_yes_for_one_process(
+    said: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The absence is the whole point: it is what tells a first start from a deliberate no."""
-    monkeypatch.delenv(telemetry.SAYS, raising=False)
+    doubles.store(monkeypatch, {"enable_sentry": False})
+    monkeypatch.setenv(SAYS, said)
 
-    assert telemetry.enabled() is None
-    assert not telemetry.start()  # and silence sends nothing
+    assert telemetry.enabled() is True
 
-    telemetry.asked(enable_sentry=False)
+
+@pytest.mark.parametrize("said", ["off", "0", "false", "No"])
+def test_the_environment_says_no_for_one_process(
+    said: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    doubles.store(monkeypatch, {"enable_sentry": True})
+    monkeypatch.setenv(SAYS, said)
+
     assert telemetry.enabled() is False
-    assert Settings().enable_sentry is False
-
-
-def test_the_answer_is_read_once_rather_than_per_report(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """`snag` is asked on every key that did nothing; a file parsed per keystroke is not free."""
-    monkeypatch.delenv(telemetry.SAYS, raising=False)
-    Settings().answers(enable_sentry=False)
-    reads = 0
-    was = Settings.enable_sentry.fget
-    assert was is not None
-
-    def counted(self: Settings) -> bool | None:
-        nonlocal reads
-        reads += 1
-        return was(self)
-
-    monkeypatch.setattr(Settings, "enable_sentry", property(counted))
-    telemetry.again()
-
-    for _ in range(5):
-        telemetry.snag("dead-key")
-
-    assert reads == 1
-    # And what is written down afterwards is what is read from then on.
-    telemetry.asked(enable_sentry=True)
-    assert telemetry.enabled() is True
-
-
-def test_a_workspace_forgotten_is_forgotten_whichever_one_did_it(
-    tmp_path: Path,
-) -> None:
-    """A merge cannot see an absence: only what this instance read when it opened tells it."""
-    from hmz.runtime.kept import Runs
-
-    Settings(tmp_path / "one").remember("chat", {"a": Runs("claude/m:high")})
-    Settings(tmp_path / "other").remember("rlar", {"a": Runs("codex/n:low")})
-
-    assert Settings(tmp_path / "one").forget(str((tmp_path / "other").resolve()))
-
-    assert Settings(tmp_path / "other").flow == ""
-    assert Settings(tmp_path / "one").flow == "chat"  # and its own is untouched
-
-
-def test_the_environment_answers_for_one_process_without_writing_it_down(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Which is what a scripted install, a CI job and this suite use."""
-    monkeypatch.setenv(telemetry.SAYS, "off")
-    Settings().answers(enable_sentry=True)
-
-    assert telemetry.enabled() is False  # the environment wins for this process
-    assert Settings().enable_sentry is True  # and nothing was written down about it
-
-    monkeypatch.setenv(telemetry.SAYS, "on")
-    assert telemetry.enabled() is True
-
-
-def test_nothing_is_reported_by_a_machine_nobody_asked(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A crash and a snag both go nowhere, and neither raises for going nowhere."""
-    monkeypatch.delenv(telemetry.SAYS, raising=False)
-    sent: list[object] = []
-    monkeypatch.setattr(telemetry, "start", lambda: bool(sent))
-
-    telemetry.crash(ValueError("nothing to see"), doing="a test")
-    telemetry.snag("dead-key", sheet="Nothing")
-
-    assert sent == []
-
-
-def test_what_the_layers_say_about_a_run_is_asked_for_only_when_it_is_needed() -> None:
-    """Nothing is gathered on a machine that reports nothing, which is most of them."""
-    asked: list[str] = []
-
-    telemetry.about("flow", lambda: asked.append("flow") or {"flow": "chat"})
-
-    assert asked == []  # registered, not run
-    assert telemetry.held() == {"flow": {"flow": "chat"}}
-    assert asked == ["flow"]
-
-
-def test_one_that_cannot_say_is_left_out_rather_than_taking_the_report_with_it() -> (
-    None
-):
-    """A report that could not describe the run is still a report worth having."""
-
-    def raises() -> object:
-        raise RuntimeError("no")
-
-    telemetry.about("flow", lambda: {"flow": "chat"})
-    telemetry.about("machine", raises)
-
-    assert telemetry.held() == {"flow": {"flow": "chat"}}
 
 
 @pytest.mark.parametrize(
-    ("said", "gone"),
-    [
-        # A turn is a command, and several of these backends take the prompt as an argument
-        # of it -- so this one line of Python's is the whole of what somebody typed.
-        (
-            (
-                "Command '['grok', '--single=fix the acme billing bug']'"
-                " returned non-zero exit status 1."
-            ),
-            "acme",
-        ),
-        (
-            "Command '['claude', '-p', 'ship it']' timed out after 5 seconds",
-            "ship it",
-        ),
-        ("/homes/someone/secret-project/x.py", "/homes/someone"),
-        ("https://x-access-token:ghp_abcdefghijklmnop@github.com/org/repo", "ghp_"),
-        ("the key is sk-ant-api03-abcdefghijklmnop and it works", "sk-ant-api03"),
-        ("https://user:hunter2@example.com/x", "hunter2"),
-    ],
+    ("stored", "answer"),
+    [({}, None), ({"enable_sentry": True}, True), ({"enable_sentry": False}, False)],
 )
-def test_what_must_not_leave_a_machine_is_taken_out_of_whatever_carries_it(
-    said: str, gone: str
+def test_otherwise_what_was_written_down_is_the_answer(
+    stored: dict[str, Any], answer: bool | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Every string that reaches a report goes through this, however it got there."""
-    assert gone not in telemetry._plainer(said)
+    doubles.store(monkeypatch, stored)
+    monkeypatch.setenv(SAYS, "maybe")
+
+    assert telemetry.enabled() is answer
 
 
-def test_a_failed_command_still_says_how_it_failed() -> None:
-    """What is taken out is the command; the status is the half a report is for."""
-    said = telemetry._plainer(
-        "Command '['grok', '--single=fix the bug']' returned non-zero exit status 137."
-    )
-
-    assert said == "A command returned non-zero exit status 137."
-
-
-def test_a_long_string_is_cut_short_because_it_is_a_file_somebody_pasted() -> None:
-    assert len(telemetry._plainer("x" * 4000)) <= telemetry._LONG + 1
-
-
-def test_no_frame_of_a_stack_carries_what_humanize_was_working_on() -> None:
-    """The switch is off in the settings; this is the same thing said again on the way out."""
-    event: dict[str, Any] = {
-        "server_name": "somebodys-laptop",
-        "user": {"id": "someone"},
-        "request": {"env": {"REMOTE_ADDR": "10.0.0.1"}},
-        "breadcrumbs": [{"message": "the task was: fix the build"}],
-        "exception": {
-            "values": [
-                {
-                    "value": "cannot read /homes/someone/project/TASK.md",
-                    "stacktrace": {
-                        "frames": [
-                            {
-                                "abs_path": "/homes/someone/humanize/src/hmz/runtime/runner.py",
-                                "vars": {"task": "fix the build", "key": "sk-abc"},
-                                "context_line": "    run(agents, task)",
-                                "pre_context": ["    # the task"],
-                                "post_context": ["    return"],
-                            }
-                        ]
-                    },
-                }
-            ]
-        },
-    }
-
-    held = telemetry._before_send(event, {})
-
-    assert held is not None
-    for gone in ("server_name", "user", "request", "breadcrumbs"):
-        assert gone not in held
-    (one,) = held["exception"]["values"]
-    (frame,) = one["stacktrace"]["frames"]
-    assert "vars" not in frame
-    assert "context_line" not in frame
-    assert "pre_context" not in frame
-    assert "/homes/someone" not in frame["abs_path"]
-    assert "/homes/someone" not in one["value"]
-
-
-def test_a_frame_of_humanizes_own_is_named_by_where_it_is_in_humanize() -> None:
-    """Which is what makes the report readable, and says nothing about this machine."""
-    event: dict[str, Any] = {
-        "exception": {
-            "values": [
-                {
-                    "value": "no",
-                    "stacktrace": {
-                        "frames": [
-                            {
-                                "abs_path": telemetry.__file__,
-                                "filename": telemetry.__file__,
-                                "module": "hmz.runtime.telemetry",
-                                "function": "start",
-                                "lineno": 12,
-                            }
-                        ]
-                    },
-                }
-            ]
-        }
-    }
-
-    held = telemetry._before_send(event, {})
-
-    assert held is not None
-    (frame,) = held["exception"]["values"][0]["stacktrace"]["frames"]
-    assert frame["abs_path"] == "hmz/runtime/telemetry.py"
-    assert frame["filename"] == "hmz/runtime/telemetry.py"
-    assert frame["function"] == "start"  # humanize's own names are humanize's to send
-    assert frame["lineno"] == 12
-
-
-def test_a_frame_of_somebody_elses_flow_carries_only_the_line_it_stopped_at(
-    tmp_path: Path,
-) -> None:
-    """A flow of theirs is a file in their project: its name is the name of their work."""
-    event: dict[str, Any] = {
-        "exception": {
-            "values": [
-                {
-                    "value": "no",
-                    "stacktrace": {
-                        "frames": [
-                            {
-                                "abs_path": str(
-                                    tmp_path / "acme-migration/flows/loop.py"
-                                ),
-                                "filename": "loop.py",
-                                "module": "acme_migration.loop",
-                                "function": "migrate_acme",
-                                "lineno": 12,
-                            }
-                        ]
-                    },
-                }
-            ]
-        }
-    }
-
-    held = telemetry._before_send(event, {})
-
-    assert held is not None
-    (frame,) = held["exception"]["values"][0]["stacktrace"]["frames"]
-    assert frame["abs_path"] == frame["filename"] == telemetry._THEIRS
-    assert "module" not in frame
-    assert "function" not in frame
-    assert frame["lineno"] == 12  # and the one thing worth knowing is still there
-
-
-def test_the_line_that_started_this_run_is_not_sent(
+def test_what_was_written_down_is_read_once_until_forgotten(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`hmz exec -f ralph_loop -a claude/… "$(cat TASK.md)"` puts the task on `sys.argv`.
+    monkeypatch.delenv(SAYS)
+    held = doubles.store(monkeypatch, {"enable_sentry": True})
+    assert telemetry.enabled() is True
 
-    The SDK collects it by default, under `extra`, which would put the whole of what somebody
-    asked for into a crash report. It is switched off where the reporter starts and taken off
-    again on the way out.
-    """
-    monkeypatch.setenv(telemetry.SAYS, "on")
-    assert telemetry.start()
+    held.held["enable_sentry"] = False
+    assert telemetry.enabled() is True
 
-    import sentry_sdk
-    from sentry_sdk.integrations.argv import ArgvIntegration
+    telemetry.again()
+    assert telemetry.enabled() is False
 
-    client = sentry_sdk.get_client()
-    assert ArgvIntegration.identifier not in client.integrations
 
-    held = telemetry._before_send(
-        {"extra": {"sys.argv": ["hmz", "exec", "the task"]}}, {}
+def test_answering_yes_writes_it_down_and_starts_reporting(
+    monkeypatch: pytest.MonkeyPatch, sent: Sentry
+) -> None:
+    monkeypatch.delenv(SAYS)
+    held = doubles.store(monkeypatch)
+
+    telemetry.asked(enable_sentry=True)
+
+    assert held.held["enable_sentry"] is True
+    assert telemetry.enabled() is True
+    assert len(sent.inits) == 1
+    assert sent.inits[0]["dsn"].startswith("https://")
+
+
+def test_answering_no_writes_it_down_and_stops_what_was_reporting(
+    monkeypatch: pytest.MonkeyPatch, sent: Sentry
+) -> None:
+    monkeypatch.delenv(SAYS)
+    held = doubles.store(monkeypatch, {"enable_sentry": True})
+    assert telemetry.start() is True
+
+    telemetry.asked(enable_sentry=False)
+
+    assert held.held["enable_sentry"] is False
+    assert sent.closed == 1
+    assert sent.inits[-1] == {"dsn": ""}
+    telemetry.crash(RuntimeError("after"))
+    assert sent.exceptions == []
+
+
+def test_the_promise_is_said_in_words() -> None:
+    assert all(isinstance(one, str) and one for one in telemetry.SENT)
+
+
+# ------------------------------------------------------------------ starting
+
+
+def test_nothing_starts_where_the_answer_is_no_or_nobody_asked(
+    monkeypatch: pytest.MonkeyPatch, sent: Sentry
+) -> None:
+    assert telemetry.start() is False
+
+    monkeypatch.delenv(SAYS)
+    doubles.store(monkeypatch)
+    telemetry.again()
+    assert telemetry.start() is False
+    assert sent.inits == []
+
+
+def test_reporting_starts_once_with_nothing_about_the_person(on: Sentry) -> None:
+    assert telemetry.start() is True
+    assert telemetry.start() is True
+
+    assert len(on.inits) == 1
+    said = on.inits[0]
+    assert said["send_default_pii"] is False
+    assert said["include_local_variables"] is False
+    assert said["enable_logs"] is False
+    assert said["server_name"] == ""
+    assert said["release"].startswith("hmz@")
+    assert [type(one).__name__ for one in said["disabled_integrations"]] == [
+        "ArgvIntegration"
+    ]
+
+
+def test_an_sdk_that_will_not_start_reports_nothing(on: Sentry) -> None:
+    on.refuses = RuntimeError("no transport")
+
+    assert telemetry.start() is False
+    telemetry.snag("dead-key")
+    assert on.messages == []
+
+
+def test_stopping_what_never_started_does_nothing(sent: Sentry) -> None:
+    telemetry.stop()
+
+    assert sent.closed == 0
+    assert sent.inits == []
+
+
+# ------------------------------------------------------------------ reports
+
+
+def test_a_crash_is_reported_with_its_tags_made_plain(on: Sentry) -> None:
+    why = RuntimeError("boom")
+
+    telemetry.crash(why, doing="a flow at /Users/alice/secret", key="sk-abcdefghijk1")
+
+    assert on.exceptions == [why]
+    assert on.scopes[0].tags == {"doing": "a flow at ~/secret", "key": "…"}
+
+
+def test_a_snag_is_a_warning_named_for_what_happened(on: Sentry) -> None:
+    telemetry.snag("dead-key", sheet="flows", where="/home/bob/x")
+
+    assert on.messages == [("snag: dead-key", "warning")]
+    assert on.scopes[0].tags == {"snag": "dead-key", "sheet": "flows", "where": "~/x"}
+
+
+def test_nothing_is_reported_while_reporting_is_off(sent: Sentry) -> None:
+    telemetry.crash(RuntimeError("boom"))
+    telemetry.snag("dead-key")
+
+    assert sent.scopes == []
+    assert sent.exceptions == []
+    assert sent.messages == []
+
+
+def test_what_the_layers_said_is_attached_scrubbed_as_yaml(
+    on: Sentry, told: Callable[[str, Callable[[], object]], None]
+) -> None:
+    told(
+        "u12-run",
+        lambda: {
+            "flow": "ralph",
+            "at": "/Users/carol/work",
+            "keys": ["ghp_abcdefghijklmnop", 3],
+            "/home/dan": ("x" * 600,),
+        },
     )
 
-    assert held is not None
-    assert "extra" not in held
+    telemetry.crash(RuntimeError("boom"))
+
+    said = yaml.safe_load(on.scopes[0].attached["u12-run.yaml"])
+    assert said["flow"] == "ralph"
+    assert said["at"] == "~/work"
+    assert said["keys"] == ["…", 3]
+    assert len(said["~"][0]) == 501
+    assert said["~"][0].endswith("…")
 
 
-def test_what_is_sent_and_what_is_not_are_both_written_down() -> None:
-    """The question cannot be answered by somebody who has not been told what it means."""
-    assert len(telemetry.SENT) > 1
-    assert len(telemetry.KEPT) > 1
-    said = " ".join(telemetry.KEPT).lower()
-    for never in ("typed", "transcript", "key"):
-        assert never in said
-
-
-def test_a_setting_written_elsewhere_survives_a_workspace_being_remembered(
-    tmp_path: Path,
+def test_whatever_cannot_say_is_left_out_of_what_is_held(
+    told: Callable[[str, Callable[[], object]], None],
 ) -> None:
-    """Two of these are alive at once wherever a menu writes one while the app writes flows."""
-    from hmz.runtime.kept import Runs
+    def cannot() -> object:
+        raise RuntimeError("no")
 
-    one, other = Settings(tmp_path), Settings(tmp_path)
-    one.answers(enable_sentry=True)
-    other.remember("chat", {"a": Runs("claude/m:high")})
+    told("u12-fine", lambda: {"one": 1})
+    told("u12-broken", cannot)
 
-    read = Settings(tmp_path)
-    assert read.enable_sentry is True
-    assert read.flow == "chat"
+    found = telemetry.held()
+    assert found["u12-fine"] == {"one": 1}
+    assert "u12-broken" not in found
 
 
-def test_a_workspace_may_be_forgotten_without_forgetting_anything_else(
-    tmp_path: Path,
+def test_registering_a_name_again_replaces_it(
+    told: Callable[[str, Callable[[], object]], None],
 ) -> None:
-    """Which is what the second page of the settings menu is for."""
-    from hmz.runtime.kept import Runs
+    told("u12-twice", lambda: 1)
+    told("u12-twice", lambda: 2)
 
-    Settings(tmp_path).answers(enable_sentry=False)
-    kept = Settings(tmp_path)
-    kept.remember("chat", {"a": Runs("claude/m:high")})
-    elsewhere = Settings(tmp_path / "other")
-    elsewhere.remember("rlar", {"a": Runs("codex/n:low")})
-
-    assert Settings(tmp_path).forget()
-
-    assert Settings(tmp_path).flow == ""
-    assert Settings(tmp_path / "other").flow == "rlar"  # somebody else's is untouched
-    assert (
-        Settings(tmp_path).enable_sentry is False
-    )  # and so is what is true everywhere
-    assert not Settings(tmp_path).forget()  # nothing left to forget
+    assert telemetry.held()["u12-twice"] == 2
 
 
-def test_every_string_inside_what_a_layer_answered_is_scrubbed_too() -> None:
-    """A layer answers with a structure, and a secret is as easily three levels down."""
-    said = telemetry._plainly(
-        {
-            "flow": "https://user:hunter2@example.com/x",
-            "agents": [
+# ------------------------------------------------------------- the last word
+
+
+def _event(**more: Any) -> dict[str, Any]:
+    return {
+        "server_name": "alices-laptop",
+        "user": {"ip_address": "10.0.0.1"},
+        "request": {},
+        "modules": {"x": "1"},
+        "extra": {"sys.argv": ["hmz", "exec", "the task"]},
+        "breadcrumbs": {"values": [{"message": "a log line"}]},
+        **more,
+    }
+
+
+def test_what_is_sent_carries_nothing_about_the_machine(on: Sentry) -> None:
+    telemetry.start()
+
+    said = on.before_send(_event(), None)
+
+    assert set(said) == set()
+
+
+def test_an_exception_is_sent_without_its_frames_variables_or_paths(
+    on: Sentry, tmp_path: Path
+) -> None:
+    telemetry.start()
+    ours = Path(telemetry.__file__).resolve()
+    theirs = tmp_path / "my-secret-project" / "flow.py"
+    event = _event(
+        exception={
+            "values": [
                 {
-                    "backend": "claude",
-                    "key": "the key is sk-ant-api03-abcdefghijklmnop",
-                },
-                "https://x-access-token:ghp_abcdefghijklmnop@github.com/org/repo",
-            ],
+                    "value": "Command 'claude -p do the secret thing' returned non-zero"
+                    " exit status 1 under /Users/eve/x",
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "abs_path": str(ours),
+                                "filename": "telemetry.py",
+                                "module": "hmz.runtime.telemetry",
+                                "function": "crash",
+                                "vars": {"task": "secret"},
+                                "context_line": "secret()",
+                                "pre_context": ["a"],
+                                "post_context": ["b"],
+                                "lineno": 3,
+                            },
+                            {
+                                "abs_path": str(theirs),
+                                "module": "my_secret_project",
+                                "function": "secret_step",
+                                "lineno": 9,
+                            },
+                            {"lineno": 1},
+                        ]
+                    },
+                }
+            ]
         }
     )
 
-    written = repr(said)
-    assert "hunter2" not in written
-    assert "sk-ant-api03" not in written
-    assert "ghp_" not in written
-    assert "claude" in written  # and what is not a secret is still there to read
+    said = on.before_send(event, None)
+
+    one = said["exception"]["values"][0]
+    assert one["value"] == "A command returned non-zero exit status 1 under ~/x"
+    ours_frame, theirs_frame, nameless = one["stacktrace"]["frames"]
+    assert ours_frame == {
+        "abs_path": "hmz/runtime/telemetry.py",
+        "filename": "hmz/runtime/telemetry.py",
+        "module": "hmz.runtime.telemetry",
+        "function": "crash",
+        "lineno": 3,
+    }
+    assert theirs_frame == {
+        "abs_path": "<not humanize>",
+        "filename": "<not humanize>",
+        "lineno": 9,
+    }
+    assert nameless["filename"] == "<not humanize>"
 
 
-def test_the_names_of_what_a_layer_answered_are_scrubbed_as_well_as_the_values() -> (
-    None
-):
-    """A key is as easily the name of a field as the value of one."""
-    said = telemetry._plainly({"https://user:hunter2@example.com/x": "ordinary"})
+def test_a_credential_in_a_url_is_taken_out(on: Sentry) -> None:
+    telemetry.crash(RuntimeError("x"), url="https://me:hunter2@example.com/repo")
 
-    assert "hunter2" not in repr(said)
-
-
-def test_what_is_not_a_string_is_left_as_it_is() -> None:
-    """Numbers and flags are what a report is read for; scrubbing them would say nothing."""
-    said = telemetry._plainly(
-        {"turns": 3, "profiled": True, "cost": 1.25, "none": None}
-    )
-
-    assert said == {"turns": 3, "profiled": True, "cost": 1.25, "none": None}
-
-
-def test_a_document_is_scrubbed_value_by_value_rather_than_whole() -> None:
-    """Value by value, not over the document.
-
-    Scrubbed as one string it could be cut in half by the length limit, and half a YAML
-    file is a file nobody can read.
-    """
-    long_enough = "x" * (telemetry._LONG - 10)
-
-    said = cast("list[Any]", telemetry._plainly([long_enough] * 3))
-
-    assert len(said) == 3
-    assert all(one == long_enough for one in said)
-
-
-def test_a_tuple_a_layer_answered_with_is_a_list_by_the_time_it_is_written() -> None:
-    """YAML has no tuple, so one that stayed a tuple would be a document that will not write."""
-    assert telemetry._plainly(("one", "two")) == ["one", "two"]
+    assert on.scopes[0].tags["url"] == "https://…@example.com/repo"

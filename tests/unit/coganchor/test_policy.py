@@ -1,272 +1,337 @@
-"""Unit tests for path routing and program placement."""
-
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import pytest
 
-from hmz.coganchor.policy import Layout, Router
+from hmz.coganchor.policy import Layout, Router, answered, head, parents
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
-def make_router(**kwargs: object) -> Router:
-    return Router(layouts=(Layout.create("/mirror", "/project"),), **kwargs)  # pyright: ignore[reportArgumentType]
-
-
-def test_identity_layout_keeps_paths_unchanged() -> None:
-    layout = Layout.create("/home/user/project", None)
-    assert (
-        layout.to_virtual("/home/user/project/src/a.py")
-        == "/home/user/project/src/a.py"
+def on(platform: str) -> Router:
+    """A router over one mirror at `/srv/mirror`, answering for a target on `platform`."""
+    return Router(
+        layouts=(Layout.create("/srv/mirror", "/work"),),
+        platform=lambda: platform,
     )
 
 
-def test_layout_translates_the_mirror_onto_the_target() -> None:
-    layout = Layout.create("/mirror", "/project")
-    assert layout.to_virtual("/mirror/src/a.py") == "/project/src/a.py"
-    assert layout.to_virtual("/mirror") == "/project"
+# -------------------------------------------------------------------------------- head
 
 
-def test_paths_inside_the_layout_are_remote() -> None:
-    router = make_router()
-    assert router.is_remote_path("/mirror/src/a.py")
-    assert router.is_remote_path("/mirror")
-    assert not router.is_remote_path("/mirrored-elsewhere/a.py")
-    assert not router.is_remote_path("/etc/passwd")
+@pytest.mark.parametrize(
+    ("named", "said"),
+    [("/a/b", "/a/b"), ("/a/state_*.db", "/a/state_"), ("/a/*/x", "/a/"), ("", "")],
+)
+def test_head_is_everything_up_to_the_first_wildcard(named: str, said: str) -> None:
+    assert head(named) == said
 
 
-def test_local_paths_carve_holes_in_the_layout() -> None:
-    router = make_router(local_paths=("/mirror/.agent-state",))
-    assert router.is_remote_path("/mirror/src/a.py")
-    assert not router.is_remote_path("/mirror/.agent-state/session.json")
+# ---------------------------------------------------------------------------- answered
+
+
+@pytest.mark.parametrize(
+    ("path", "answer"),
+    [
+        ("/h/c.json", "/p/c.json"),
+        ("/h/c.json.tmp", "/p/c.json.tmp"),
+        ("/h/c.json/inside", "/p/c.json/inside"),
+        ("/h/c.jsonl", None),
+        ("/h/other", None),
+    ],
+)
+def test_a_path_answers_itself_what_is_inside_and_what_is_beside_it(
+    path: str, answer: str | None
+) -> None:
+    assert answered("/h/c.json", "/p/c.json", path) == answer
+
+
+@pytest.mark.parametrize(
+    ("named", "instead", "path", "answer"),
+    [
+        ("/h/state_*.db", "/p/state_*.db", "/h/state_5.db", "/p/state_5.db"),
+        ("/h/state_*.db", "/p/state_*.db", "/h/state_5.db/x", "/p/state_5.db/x"),
+        ("/h/state_*.db", "/p/state_*.db", "/h/other.db", None),
+        (
+            "/h/projects/*/chats",
+            "/s/projects/*/chats",
+            "/h/projects/a/chats/1",
+            "/s/projects/a/chats/1",
+        ),
+        ("/h/projects/*/chats", "/s/projects/*/chats", "/h/projects", None),
+        ("/h/projects/*/chats", "/s/projects/*/chats", "/h/projects/a/logs", None),
+    ],
+)
+def test_a_pattern_answers_every_path_whose_names_match(
+    named: str, instead: str, path: str, answer: str | None
+) -> None:
+    assert answered(named, instead, path) == answer
+
+
+# ----------------------------------------------------------------------------- parents
+
+
+def test_parents_makes_the_directory_a_path_is_in_once(tmp_path: Path) -> None:
+    made: set[str] = set()
+    path = tmp_path / "a" / "b" / "file"
+
+    parents(str(path), made)
+
+    assert path.parent.is_dir()
+    assert made == {str(path.parent)}
+
+
+def test_parents_does_not_ask_again_for_what_it_made(tmp_path: Path) -> None:
+    gone = tmp_path / "gone"
+    made = {str(gone)}
+
+    parents(str(gone / "file"), made)
+
+    assert not gone.exists()
+
+
+def test_parents_says_nothing_of_a_directory_it_cannot_make(tmp_path: Path) -> None:
+    blocker = tmp_path / "file"
+    blocker.write_text("")
+    made: set[str] = set()
+
+    parents(str(blocker / "below" / "x"), made)
+
+    assert made == set()
+
+
+# ------------------------------------------------------------------------------ Layout
+
+
+def test_a_layout_with_no_target_path_is_the_mirror_itself() -> None:
+    layout = Layout.create("/srv/mirror/", None)
+
+    assert layout == Layout("/srv/mirror", "/srv/mirror")
+    assert layout.to_virtual("/srv/mirror/a") == "/srv/mirror/a"
+
+
+def test_a_layout_names_a_path_as_the_target_does() -> None:
+    layout = Layout.create("/srv/mirror", "/work")
+
+    assert layout.to_virtual("/srv/mirror") == "/work"
+    assert layout.to_virtual("/srv/mirror/src/x.py") == "/work/src/x.py"
+    assert layout.to_virtual("/SRV/Mirror/src") == "/work/src"
+
+
+@pytest.mark.parametrize(
+    ("path", "inside"),
+    [
+        ("/srv/mirror", True),
+        ("/srv/mirror/a", True),
+        ("/srv/mirrored", False),
+        ("/srv", False),
+    ],
+)
+def test_a_layout_holds_what_lies_under_its_root(path: str, inside: bool) -> None:
+    assert Layout.create("/srv/mirror", "/work").contains(path) is inside
+
+
+def test_a_layout_compares_case_only_when_asked() -> None:
+    layout = Layout.create("/srv/mirror", "/work")
+
+    assert not layout.contains("/SRV/MIRROR/a")
+    assert layout.contains("/SRV/MIRROR/a", insensitive=True)
+    assert layout.below("/SRV/MIRROR/a", insensitive=True) == "a"
+
+
+def test_a_path_outside_a_layout_has_no_name_on_the_target() -> None:
+    with pytest.raises(ValueError, match="is not inside"):
+        Layout.create("/srv/mirror", "/work").to_virtual("/etc/passwd")
+
+
+# ------------------------------------------------------------------------------ Router
+
+
+def test_paths_in_the_mirror_are_the_targets_and_the_rest_are_local() -> None:
+    router = on("linux")
+
+    assert router.is_remote_path("/srv/mirror/a")
+    assert not router.is_remote_path("/home/me/.ssh")
+    assert router.to_virtual("/srv/mirror/a") == "/work/a"
+    with pytest.raises(ValueError, match="not inside a remote layout"):
+        router.to_virtual("/home/me")
+
+
+def test_a_working_directory_outside_every_layout_is_left_alone() -> None:
+    router = on("linux")
+
+    assert router.virtual_cwd("/srv/mirror/sub") == "/work/sub"
+    assert router.virtual_cwd("/home/me") == "/home/me"
+
+
+def test_nested_layouts_prefer_the_longest_root() -> None:
+    router = Router(
+        layouts=(Layout.create("/m", "/w"), Layout.create("/m/inner", "/elsewhere")),
+    )
+
+    assert router.to_virtual("/m/inner/a") == "/elsewhere/a"
+    assert router.to_virtual("/m/other") == "/w/other"
+
+
+def test_local_paths_carve_holes_in_the_mirror() -> None:
+    router = Router(
+        layouts=(Layout.create("/m", "/w"),),
+        local_paths=("/m/.state",),
+    )
+
+    assert router.layout_for("/m/.state/x") is None
+    assert router.layout_for("/m/src") is not None
 
 
 def test_a_mirror_inside_a_local_path_is_still_the_targets() -> None:
-    """A container's mirror under humanize's own home, which stays here, is the workdir there.
-
-    The agent starts in the mirror, so a mirror swallowed by the home it is kept in would send
-    its every command to the target's home directory instead of the workdir.
-    """
     router = Router(
-        layouts=(Layout.create("/home/me/.hmz/envs/mirrors/box/ab12", "/work"),),
-        local_paths=("/home/me/.hmz", "/home/me/.hmz/envs/mirrors/box/ab12"),
+        layouts=(Layout.create("/home/me/.hmz/mirror", "/w"),),
+        local_paths=("/home/me/.hmz",),
     )
-    assert router.virtual_cwd("/home/me/.hmz/envs/mirrors/box/ab12") == "/work"
-    assert router.to_virtual("/home/me/.hmz/envs/mirrors/box/ab12/a.py") == (
-        "/work/a.py"
-    )
-    assert not router.is_remote_path("/home/me/.hmz/providers/key.json")
+
+    assert router.is_remote_path("/home/me/.hmz/mirror/a")
+    assert not router.is_remote_path("/home/me/.hmz/other")
 
 
-def test_a_mirror_reached_through_a_symlink_answers_to_both_names() -> None:
-    """The name a mirror was given and the kernel's name for it both reach the target's path."""
+def test_a_hole_is_carved_in_whatever_case_the_target_ignores() -> None:
     router = Router(
-        layouts=(Layout.create("/ephemeral/cache/m", "/work"),),
-        aliases=(("/home/me/.cache/m", "/ephemeral/cache/m"),),
+        layouts=(Layout.create("/m", "/w"),),
+        local_paths=("/m/.state",),
+        platform=lambda: "darwin",
     )
-    assert router.rewrite("cd /home/me/.cache/m/src") == "cd /work/src"
-    assert router.rewrite("cat /ephemeral/cache/m/a.py") == "cat /work/a.py"
-    assert router.canonical("/home/me/.cache/m/a.py") == "/ephemeral/cache/m/a.py"
-    assert router.virtual_cwd("/ephemeral/cache/m") == "/work"
+
+    assert router.layout_for("/m/.STATE/x") is None
 
 
-def test_nested_layouts_prefer_the_longest_match() -> None:
+def test_programs_run_on_the_target_unless_kept_here() -> None:
     router = Router(
-        layouts=(
-            Layout.create("/mirror", "/project"),
-            Layout.create("/mirror/data", "/data"),
-        ),
+        layouts=(Layout.create("/m", "/w"),),
+        local_programs=("/opt/agent",),
     )
-    assert router.to_virtual("/mirror/src/a.py") == "/project/src/a.py"
-    assert router.to_virtual("/mirror/data/set.csv") == "/data/set.csv"
 
-
-def test_programs_default_to_the_target() -> None:
-    router = make_router(local_programs=("/opt/agent/bin/agent",))
-    assert not router.runs_locally("/bin/bash")
+    assert router.runs_locally("/opt/agent/bin/node")
     assert not router.runs_locally("/usr/bin/git")
-    assert router.runs_locally("/opt/agent/bin/agent")
+    assert not router.runs_locally("/opt/agentx")
 
 
-def test_working_directory_outside_a_layout_is_untouched() -> None:
-    router = make_router()
-    assert router.virtual_cwd("/mirror/sub") == "/project/sub"
-    assert router.virtual_cwd("/tmp") == "/tmp"
+def test_rewriting_is_a_no_op_where_the_mirror_is_at_the_targets_path() -> None:
+    router = Router(layouts=(Layout.create("/m", None),))
+
+    assert router.rewrite("grep -r x /m/src") == "grep -r x /m/src"
 
 
-def test_rewrite_is_a_no_op_for_identity_layouts() -> None:
-    router = Router(layouts=(Layout.create("/project", None),))
-    assert router.rewrite("cat /project/f") == "cat /project/f"
+def test_rewriting_names_the_mirror_as_the_target_does() -> None:
+    router = on("linux")
+
+    assert router.rewrite("grep -r x /srv/mirror/src") == "grep -r x /work/src"
+    assert router.rewrite("echo hello/srv/mirror") == "echo hello/srv/mirror"
 
 
-def test_rewrite_maps_mirror_paths_to_target_paths() -> None:
-    assert make_router().rewrite("cat /mirror/f") == "cat /project/f"
+def test_rewriting_matches_any_case_only_for_a_target_that_ignores_it() -> None:
+    assert on("linux").rewrite("cat /SRV/MIRROR/a") == "cat /SRV/MIRROR/a"
+    assert on("darwin").rewrite("cat /SRV/MIRROR/a") == "cat /work/a"
 
 
-def test_to_virtual_rejects_paths_outside_every_layout() -> None:
-    with pytest.raises(ValueError, match="not inside"):
-        make_router().to_virtual("/etc/passwd")
+def test_rewriting_knows_the_mirror_by_its_other_name() -> None:
+    router = Router(layouts=(Layout.create("/tmp/m", "/w"),))
+
+    assert router.rewrite("ls /private/tmp/m/x") == "ls /w/x"
 
 
-def mac_router(**kwargs: object) -> Router:
-    """A router whose target said it is a Mac, which is the only end that can say."""
-    return Router(platform=lambda: "darwin", **kwargs)  # pyright: ignore[reportArgumentType]
-
-
-def test_a_path_the_target_spells_through_private_is_settled_onto_the_mirror() -> None:
-    """`/tmp` on a Mac is reached through `/private/tmp`, and both name the mirror."""
-    router = Router(layouts=(Layout.create("/tmp/mirror", "/project"),))
-    assert router.canonical("/private/tmp/mirror/src/a.py") == "/tmp/mirror/src/a.py"
-    assert router.is_remote_path(router.canonical("/private/tmp/mirror/src/a.py"))
-    assert (
-        router.to_virtual(router.canonical("/private/tmp/mirror/src/a.py"))
-        == "/project/src/a.py"
+def test_a_redirect_answers_by_the_entry_that_says_most() -> None:
+    router = Router(
+        layouts=(),
+        redirects=(("/h/.c", "/p/all"), ("/h/.c/creds.json", "/p/creds.json")),
     )
 
-
-def test_a_path_outside_every_layout_keeps_the_spelling_it_was_named_with() -> None:
-    """The regression that sank folding at comparison time, guarded from the other side.
-
-    A `/private` path that is not the mirror's stays exactly as it was named, so it is
-    answered by this machine as any other absent path is -- one that is not there, rather
-    than one under a directory only root may create.
-    """
-    router = Router(layouts=(Layout.create("/tmp/mirror", "/project"),))
-    for outside in (
-        "/private/tmp/elsewhere/a.py",
-        "/private/tmp/mirror-elsewhere/a.py",
-        "/private/var/db/secret",
-    ):
-        assert router.canonical(outside) == outside
-        assert not router.is_remote_path(router.canonical(outside))
+    assert router.swap("/h/.c/creds.json") == "/p/creds.json"
+    assert router.swap("/h/.c/other") == "/p/all/other"
+    assert router.swap("/h/elsewhere") is None
 
 
-def test_a_mirror_named_under_private_is_settled_onto_its_own_root() -> None:
-    """Settling re-roots onto the layout's own spelling, whichever way that is written."""
-    router = Router(layouts=(Layout.create("/private/tmp/mirror", "/project"),))
-    assert router.canonical("/tmp/mirror/src/a.py") == "/private/tmp/mirror/src/a.py"
-    assert router.canonical("/private/tmp/mirror") == "/private/tmp/mirror"
+def test_a_target_not_yet_reached_is_no_mac() -> None:
+    router = Router(layouts=(Layout.create("/m", "/w"),))
 
-
-def test_case_is_settled_only_when_the_target_says_it_ignores_case() -> None:
-    """A Mac reads `/users/me` and `/Users/me` as one directory; Linux reads two."""
-    layouts = (Layout.create("/Users/me/w", "/Users/me/w"),)
-    assert mac_router(layouts=layouts).canonical("/users/ME/w/Src/A.py") == (
-        "/Users/me/w/Src/A.py"
-    )
-    assert Router(layouts=layouts).canonical("/users/ME/w/Src/A.py") == (
-        "/users/ME/w/Src/A.py"
-    )
-
-
-def test_a_target_that_has_not_been_reached_yet_is_no_mac() -> None:
-    """The settings are written before the handshake, so until it happens nothing folds."""
-    router = Router(layouts=(Layout.create("/Users/me/w", None),))
     assert not router.insensitive
-    assert not router.is_remote_path("/users/me/w/a.py")
+    assert not router.settles
+
+
+def test_a_mac_is_insensitive_to_case() -> None:
+    assert on("darwin").insensitive
+    assert not on("linux").insensitive
 
 
 def test_a_session_with_one_spelling_for_everything_has_nothing_to_settle() -> None:
-    """What the supervisor asks before it reads a syscall's paths a second time."""
-    assert not Router(layouts=(Layout.create("/home/me/w", None),)).settles
-    assert Router(layouts=(Layout.create("/tmp/mirror", None),)).settles
-    assert Router(layouts=(Layout.create("/private/tmp/mirror", None),)).settles
-    assert mac_router(layouts=(Layout.create("/home/me/w", None),)).settles
-    # A mirror at the root holds both spellings of three directories, so it settles too.
-    assert Router(layouts=(Layout.create("/", None),)).settles
+    router = on("linux")
+
+    assert not router.settles
+    assert router.canonical("/SRV/MIRROR/a") == "/SRV/MIRROR/a"
 
 
-def test_a_layout_names_a_path_it_was_given_in_another_case() -> None:
-    """What a caller reaching a layout without the router's flag must still be answered.
+def test_what_settles_is_asked_again_until_the_target_answers() -> None:
+    said = [""]
+    router = Router(layouts=(Layout.create("/m", "/w"),), platform=lambda: said[0])
 
-    `ShadowTree` resolves against the layout it was handed, and a fall-through to the
-    workspace root would push a file's bytes at the workspace directory itself.
-    """
-    layout = Layout.create("/Users/me/w", "/project")
-    assert layout.to_virtual("/Users/ME/w/vendor/lib.py") == "/project/vendor/lib.py"
-    with pytest.raises(ValueError, match="not inside"):
-        layout.to_virtual("/etc/passwd")
-
-
-def test_a_hole_is_carved_by_the_rule_the_layout_is_matched_by() -> None:
-    """The agent's own state must not be mirrored because a model typed it differently."""
-    kept = ("/Users/me/w/.agent-state",)
-    assert not mac_router(
-        layouts=(Layout.create("/Users/me/w", "/project"),), local_paths=kept
-    ).is_remote_path("/Users/me/w/.Agent-State/session.json")
-    assert Router(
-        layouts=(Layout.create("/Users/me/w", "/project"),), local_paths=kept
-    ).is_remote_path("/Users/me/w/.Agent-State/session.json")
+    assert not router.settles
+    said[0] = "darwin"
+    assert router.settles
+    said[0] = "linux"
+    assert router.settles
 
 
-def test_an_argument_naming_the_mirror_by_its_other_name_is_rewritten() -> None:
-    """`/tmp/m` and `/private/tmp/m` are one directory, and a command may name either."""
-    router = Router(layouts=(Layout.create("/tmp/mirror", "/project"),))
-    assert (
-        router.rewrite("grep -r x /private/tmp/mirror/src") == "grep -r x /project/src"
-    )
-    assert router.rewrite("grep -r x /tmp/mirror/src") == "grep -r x /project/src"
+@pytest.mark.parametrize(
+    ("path", "settled"),
+    [
+        ("/SRV/Mirror/a/B", "/srv/mirror/a/B"),
+        ("/srv/mirror", "/srv/mirror"),
+        ("/SRV/MIRROR", "/srv/mirror"),
+        ("/Elsewhere/X", "/Elsewhere/X"),
+    ],
+)
+def test_a_mac_settles_a_path_onto_the_mirrors_own_spelling(
+    path: str, settled: str
+) -> None:
+    assert on("darwin").canonical(path) == settled
 
 
-def test_an_argument_naming_the_mirror_in_another_case_is_rewritten_for_a_mac() -> None:
-    layouts = (Layout.create("/Mirror", "/project"),)
-    assert mac_router(layouts=layouts).rewrite("cat /mirror/f") == "cat /project/f"
-    assert Router(layouts=layouts).rewrite("cat /mirror/f") == "cat /mirror/f"
+def test_a_path_named_through_private_is_settled_onto_the_mirror() -> None:
+    router = Router(layouts=(Layout.create("/tmp/m", "/w"),), platform=lambda: "linux")
 
-
-def elsewhere_router(**kwargs: object) -> Router:
-    """A harness on another machine: its mirror in that machine's cache, not at `/project`."""
-    return Router(
-        layouts=(Layout.create("/cache/mirrors/abc", "/project"),),
-        aliases=(("/project", "/cache/mirrors/abc"),),
-        **kwargs,  # pyright: ignore[reportArgumentType]
-    )
+    assert router.settles
+    assert router.canonical("/private/tmp/m/a") == "/tmp/m/a"
+    assert router.canonical("/private/var/x") == "/private/var/x"
 
 
 def test_the_workspace_named_by_its_own_path_is_settled_onto_the_mirror() -> None:
-    """What a CLI told where to work by the target's path names, which only the mirror has."""
-    router = elsewhere_router()
-    assert router.settles
-    assert router.canonical("/project") == "/cache/mirrors/abc"
-    assert router.canonical("/project/src/a.py") == "/cache/mirrors/abc/src/a.py"
-    assert router.is_remote_path(router.canonical("/project/src/a.py"))
-    assert router.to_virtual(router.canonical("/project/src/a.py")) == (
-        "/project/src/a.py"
-    )
-    assert router.virtual_cwd(router.canonical("/project/sub")) == "/project/sub"
-
-
-def test_an_alias_answers_nothing_outside_the_workspace() -> None:
-    """Only the workspace's own path: a sibling sharing its prefix is this machine's."""
-    router = elsewhere_router()
-    for outside in ("/projects/a.py", "/project-old/a.py", "/etc/passwd", "/"):
-        assert router.canonical(outside) == outside
-    assert router.canonical("/cache/mirrors/abc/a.py") == "/cache/mirrors/abc/a.py"
-
-
-def test_an_alias_leaves_what_stays_here_to_stay_here() -> None:
-    """A path kept on this machine inside the workspace is still kept, by either name."""
-    for kept in ("/cache/mirrors/abc/.state", "/project/.state"):
-        router = elsewhere_router(local_paths=(kept,))
-        assert not router.is_remote_path(router.canonical("/project/.state/session"))
-        assert not router.is_remote_path(
-            router.canonical("/cache/mirrors/abc/.state/session")
-        )
-        assert router.is_remote_path(router.canonical("/project/src"))
-
-
-def test_an_alias_is_one_more_spelling_on_a_mac() -> None:
-    """The target's path in whichever case a Mac does not distinguish, and still the mirror."""
     router = Router(
-        layouts=(Layout.create("/cache/m", "/Users/me/w"),),
-        aliases=(("/Users/me/w", "/cache/m"),),
-        platform=lambda: "darwin",
+        layouts=(Layout.create("/srv/mirror", "/work"),),
+        aliases=(("/work", "/srv/mirror"),),
+        platform=lambda: "linux",
     )
-    assert router.canonical("/users/ME/w/a.py") == "/cache/m/a.py"
+
+    assert router.canonical("/work/a") == "/srv/mirror/a"
+    assert router.canonical("/work") == "/srv/mirror"
+    assert router.canonical("/workshop") == "/workshop"
 
 
-def test_a_program_kept_here_is_kept_here_by_either_name() -> None:
-    """A `--local-exec` written as the workspace's own path is the program in the mirror."""
-    for kept in ("/cache/mirrors/abc/bin/tool", "/project/bin/tool"):
-        router = elsewhere_router(local_programs=(kept,))
-        assert router.runs_locally(router.canonical("/project/bin/tool"))
-        assert router.runs_locally("/cache/mirrors/abc/bin/tool")
-        assert not router.runs_locally(router.canonical("/project/bin/other"))
+def test_an_alias_keeps_the_holes_and_programs_named_under_it() -> None:
+    router = Router(
+        layouts=(Layout.create("/srv/mirror", "/work"),),
+        local_paths=("/work/.state",),
+        local_programs=("/work/bin/agent",),
+        aliases=(("/work", "/srv/mirror"),),
+    )
+
+    assert router.layout_for("/srv/mirror/.state/x") is None
+    assert router.runs_locally("/srv/mirror/bin/agent")
+
+
+def test_an_argument_naming_the_mirror_by_an_alias_is_rewritten() -> None:
+    router = Router(
+        layouts=(Layout.create("/srv/mirror", "/work"),),
+        aliases=(("/home/me/proj", "/srv/mirror"),),
+    )
+
+    assert router.rewrite("cat /home/me/proj/a") == "cat /work/a"

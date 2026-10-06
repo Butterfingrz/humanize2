@@ -1,139 +1,186 @@
+"""`hmz.tui.discover`: which agents are installed, which can be added, and what each runs."""
+
 from __future__ import annotations
 
-import importlib.machinery
 import importlib.util
-import shutil
-from pathlib import Path
-from typing import TYPE_CHECKING
+import sys
+import types
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
-from hmz.coganchor import backends
+import pytest
+
 from hmz.tui import discover
 
 if TYPE_CHECKING:
-    import pytest
+    from pathlib import Path
 
 
-def test_dsh_is_installed_when_its_python_sdk_is_importable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def missing_executable(_name: str) -> None:
-        return None
+@dataclass
+class _Profile:
+    name: str
 
-    def found_module(name: str) -> importlib.machinery.ModuleSpec | None:
-        return (
-            importlib.machinery.ModuleSpec(name, loader=None)
-            if name in ("deepseek_harness", "dotenv")
-            else None
-        )
 
-    monkeypatch.setattr(shutil, "which", missing_executable)
-    # And nothing where an installer would have left one either: what is installed here is
-    # what this test says it is, rather than what the developer's own machine has.
-    monkeypatch.setattr(backends, "_INSTALLED_AT", ())
-    monkeypatch.setattr(
-        importlib.util,
-        "find_spec",
-        found_module,
+@dataclass
+class _Accounts:
+    known: dict[str, tuple[str, ...]] = field(
+        default_factory=dict[str, tuple[str, ...]]
     )
 
-    found = discover.installed()
-
-    # litellm is a package too, and its module is not one this test says is there.
-    assert list(found) == ["dsh"]
-    assert [model.name for model in found["dsh"]] == [
-        "deepseek-v4-flash",
-        "deepseek-v4-pro",
-    ]
-    assert list(discover.installable()) == ["litellm"]
+    def models(self, backend: str) -> tuple[str, ...]:
+        return self.known.get(backend, ())
 
 
-def test_a_missing_dsh_sdk_is_installable_but_not_installed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def missing_executable(_name: str) -> None:
-        return None
+@dataclass
+class _World:
+    """What the machine has, as `hmz.coganchor` and `hmz.daemon` would say it."""
 
-    def missing_module(_name: str) -> None:
-        return None
+    profiles: list[str] = field(default_factory=list[str])
+    programs: set[str] = field(default_factory=set[str])
+    speaking: dict[str, tuple[str, ...]] = field(
+        default_factory=dict[str, tuple[str, ...]]
+    )
+    modules: set[str] = field(default_factory=set[str])
+    accounts: _Accounts = field(default_factory=_Accounts)
 
-    monkeypatch.setattr(shutil, "which", missing_executable)
-    monkeypatch.setattr(backends, "_INSTALLED_AT", ())
-    monkeypatch.setattr(importlib.util, "find_spec", missing_module)
+
+@pytest.fixture
+def world(monkeypatch: pytest.MonkeyPatch) -> _World:
+    held = _World()
+    known = importlib.util.find_spec
+
+    def find_spec(name: str, package: str | None = None) -> Any:
+        if name in {"deepseek_harness", "dotenv", "websockets", "litellm"}:
+            return object() if name in held.modules else None
+        return known(name, package)
+
+    monkeypatch.setattr(
+        discover, "profiles", lambda: tuple(_Profile(one) for one in held.profiles)
+    )
+
+    def named(backend: str) -> _Profile | None:
+        return _Profile(backend) if backend in held.profiles else None
+
+    def program(command: str) -> str | None:
+        return f"/bin/{command}" if command in held.programs else None
+
+    monkeypatch.setattr(discover, "named", named)
+    monkeypatch.setattr(discover, "program", program)
+    monkeypatch.setattr(discover, "speaking", lambda: held.speaking)
+    monkeypatch.setattr(
+        discover, "Hmz", lambda: types.SimpleNamespace(accounts=held.accounts)
+    )
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+    return held
+
+
+def test_nothing_installed_is_nothing_found(world: _World) -> None:
+    world.profiles = ["claude", "codex"]
 
     assert discover.installed() == {}
-    assert [model.name for model in discover.installable()["dsh"]] == [
-        "deepseek-v4-flash",
-        "deepseek-v4-pro",
-    ]
-    # And nothing else: kimi is behind an extra too, but its CLI is not here either, so what
-    # it is missing is not a package and a line naming one would be half an answer.
-    # litellm has no CLI either, so it is a package missing just as dsh is.
-    assert list(discover.installable()) == ["dsh", "litellm"]
 
 
-def test_kimi_without_its_websocket_client_is_installable_rather_than_hidden(
-    monkeypatch: pytest.MonkeyPatch,
+def test_a_backend_whose_program_is_here_is_installed_with_its_models(
+    world: _World,
 ) -> None:
-    """The CLI is here and the package it is driven over is not, which is a line to run."""
+    world.profiles = ["claude", "codex"]
+    world.programs = {"claude"}
+    world.accounts.known = {"claude": ("opus", "sonnet")}
 
-    def only_kimi(name: str) -> str | None:
-        return "/usr/bin/kimi" if name == "kimi" else None
+    assert discover.installed() == {"claude": ("opus", "sonnet")}
 
-    def missing_module(_name: str) -> None:
-        return None
 
-    monkeypatch.setattr(shutil, "which", only_kimi)
-    monkeypatch.setattr(backends, "_INSTALLED_AT", ())
-    monkeypatch.setattr(importlib.util, "find_spec", missing_module)
+def test_a_backend_never_asked_is_installed_with_nothing_in_it(world: _World) -> None:
+    world.profiles = ["codex"]
+    world.programs = {"codex"}
+
+    assert discover.installed() == {"codex": ()}
+
+
+def test_a_cli_somebody_added_is_found_by_the_command_they_gave(world: _World) -> None:
+    world.profiles = ["mine"]
+    world.speaking = {"mine": ("my-agent", "--serve")}
+    world.programs = {"my-agent"}
+
+    assert "mine" in discover.installed()
+
+
+def test_a_cli_added_with_no_command_is_not_installed(world: _World) -> None:
+    world.profiles = ["mine"]
+    world.speaking = {"mine": ()}
+    world.programs = {"mine"}
 
     assert discover.installed() == {}
-    assert "kimi" in discover.installable()
 
 
-def test_a_backend_somebody_added_is_installed_if_the_command_they_gave_is_there(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("backend", "modules", "found"),
+    [
+        ("kimi", set[str](), False),
+        ("kimi", {"websockets"}, True),
+        ("dsh", {"deepseek_harness"}, False),
+        ("dsh", {"deepseek_harness", "dotenv"}, True),
+        ("litellm", {"litellm"}, True),
+        ("litellm", set[str](), False),
+    ],
+)
+def test_a_backend_with_an_extra_needs_the_whole_of_it(
+    world: _World, backend: str, modules: set[str], found: bool
 ) -> None:
-    """One humanize drives is started by its own name; one somebody added, by their command."""
+    world.profiles = [backend]
+    world.programs = {backend}
+    world.modules = modules
 
-    def added() -> dict[str, tuple[str, ...]]:
-        return {"theirs": ("a-cli-of-theirs",)}
-
-    def looked_up(said: str) -> str | None:
-        return "/usr/bin/it" if said == "a-cli-of-theirs" else None
-
-    monkeypatch.setattr(backends, "_INSTALLED_AT", ())
-    monkeypatch.setattr(discover, "speaking", added)
-    monkeypatch.setattr(discover, "program", looked_up)
-
-    assert discover._is_installed("theirs")
+    assert (backend in discover.installed()) is found
 
 
-def test_a_backend_somebody_added_with_no_command_at_all_is_not_installed(
-    monkeypatch: pytest.MonkeyPatch,
+def test_dsh_and_litellm_need_no_program(world: _World) -> None:
+    world.profiles = ["dsh", "litellm"]
+    world.modules = {"deepseek_harness", "dotenv", "litellm"}
+
+    assert set(discover.installed()) == {"dsh", "litellm"}
+
+
+def test_an_optional_backend_missing_its_extra_is_installable(world: _World) -> None:
+    world.programs = {"kimi"}
+    world.accounts.known = {"kimi": ("k2",), "dsh": ("v3",)}
+
+    assert discover.installable() == {"dsh": ("v3",), "kimi": ("k2",), "litellm": ()}
+
+
+def test_an_optional_backend_without_its_program_is_not_installable(
+    world: _World,
 ) -> None:
-    def added() -> dict[str, tuple[str, ...]]:
-        return {"theirs": ()}
-
-    monkeypatch.setattr(discover, "speaking", added)
-
-    assert not discover._is_installed("theirs")
+    assert "kimi" not in discover.installable()
 
 
-def test_an_ordinary_cli_may_be_chosen_without_anybody_choosing_it() -> None:
-    """A CLI on PATH is there because somebody installed it, which is the choosing."""
-    assert discover.ready_to_open("claude", Path("/somewhere"))
+def test_an_optional_backend_with_its_extra_is_not_installable(world: _World) -> None:
+    world.programs = {"kimi"}
+    world.modules = {"websockets", "litellm", "deepseek_harness", "dotenv"}
+
+    assert discover.installable() == {}
 
 
-def test_the_backend_that_arrives_with_humanize_is_asked_whether_it_is_set_up(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize(("backend", "ready"), [("claude", True), ("litellm", False)])
+def test_a_cli_is_ready_to_open_and_litellm_never_is(
+    tmp_path: Path, backend: str, ready: bool
 ) -> None:
-    """Its SDK arrives whatever happens, so being installed says nothing about being usable."""
-    from hmz.coganchor.agents import dsh
+    assert discover.ready_to_open(backend, tmp_path) is ready
 
-    def set_up(where: Path) -> bool:
-        return where == tmp_path
 
-    monkeypatch.setattr(dsh, "native_ready", set_up)
+@pytest.mark.parametrize("configured", [True, False])
+def test_dsh_is_ready_to_open_only_once_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, configured: bool
+) -> None:
+    asked: list[Path] = []
 
-    assert discover.ready_to_open("dsh", tmp_path)
-    assert not discover.ready_to_open("dsh", tmp_path / "elsewhere")
+    def native_ready(where: Path) -> bool:
+        asked.append(where)
+        return configured
+
+    driver = types.ModuleType("hmz.coganchor.agents.dsh")
+    driver.__dict__["native_ready"] = native_ready
+    monkeypatch.setitem(sys.modules, "hmz.coganchor.agents.dsh", driver)
+
+    assert discover.ready_to_open("dsh", tmp_path) is configured
+    assert asked == [tmp_path]

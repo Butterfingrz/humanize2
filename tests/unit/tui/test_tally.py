@@ -1,856 +1,442 @@
-"""What a run costs, read out of the logs the CLIs keep while they are still writing them.
-
-A backend says what a turn cost once the turn is over, and a turn is minutes long. Its log has
-the same numbers a request at a time, so this reads it there -- which is what makes the figure
-move while the work is happening rather than in one jump at the end of it.
-
-The rows here are the shapes the real logs have: a Claude transcript's assistant message, a
-Codex rollout's `token_count`, a Kimi server event's completed step.
-"""
+"""`hmz.tui.tally`: what a run has cost, read from the logs the agents keep for themselves."""
 
 from __future__ import annotations
 
 import json
-from dataclasses import replace
-from typing import TYPE_CHECKING
+import threading
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from hmz.coganchor.agents import (
-    ClaudeCodeAgent,
-    ClaudeCodeAgentConfig,
-    CodexAgent,
-    CodexAgentConfig,
-    DshAgent,
-    DshAgentConfig,
-    KimiCodeCLIAgent,
-    KimiCodeCLIAgentConfig,
-)
-from hmz.tui.monitor import Monitor
-from hmz.tui.tally import Seen, Tally
+from hmz.coganchor import backends
+from hmz.tui.tally import Seen, Tally, reported
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
     from pathlib import Path
 
-    from hmz.coganchor.agents import AgentBase
+    from hmz.tui.monitor import Monitor
 
 
-def _seen(agent: AgentBase, *idents: str) -> Seen:
-    """One session of an agent, as what is told of it says: the backend's names for it.
+@dataclass
+class _Profile:
+    """A backend as `hmz.coganchor.backends` describes one: where it logs, and how."""
 
-    Args:
-      agent: The agent behind it, which says what runs it, at what, and what it counts.
-      idents: What the backend has called the session so far.
+    name: str
+    home: Path
 
-    Returns:
-      The session, as a tally reads it.
-    """
-    return Seen(
-        agent.id,
-        agent.backend,
-        agent.config.model,
-        type(agent).counts,
-        frozenset(idents),
+    def directory(self) -> Path:
+        return self.home
+
+    def logged(self, ident: str) -> tuple[str, ...]:
+        return (f"{ident}.jsonl", f"sub/{ident}-*.jsonl")
+
+
+@dataclass
+class _Told:
+    """What a tally tells the monitor, kept to be read back."""
+
+    reports: dict[str, frozenset[str]] = field(
+        default_factory=dict[str, frozenset[str]]
     )
+    totals: dict[str, tuple[int, dict[str, float] | None]] = field(
+        default_factory=dict[str, tuple[int, dict[str, float] | None]]
+    )
+    sources: set[str] = field(default_factory=set[str])
+    landed: threading.Event = field(default_factory=threading.Event)
 
+    def reporting(self, agent: str, kinds: Iterable[str]) -> None:
+        self.reports[agent] = frozenset(kinds)
 
-def _rows(path: Path, *rows: Mapping[str, object]) -> None:
-    """Appends rows to a log, as the CLI writing it would.
-
-    Args:
-      path: The log, whose directory is made if it is not there.
-      rows: What to append.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a") as stream:
-        for row in rows:
-            stream.write(json.dumps(row) + "\n")
-
-
-def _said(model: str, output: int) -> dict[str, object]:
-    """One assistant message of a Claude transcript, with the usage of the request behind it."""
-    return {
-        "type": "assistant",
-        "message": {
-            "model": model,
-            "usage": {
-                "input_tokens": 2,
-                "output_tokens": output,
-                "cache_read_input_tokens": 1000,
-                "cache_creation_input_tokens": 0,
-            },
-        },
-    }
+    def counted(
+        self,
+        source: str,
+        model: str,
+        total: int,
+        now: float | None = None,
+        kinds: Mapping[str, float] | None = None,
+    ) -> None:
+        self.sources.add(source)
+        self.totals[model] = (total, dict(kinds) if kinds is not None else None)
+        self.landed.set()
 
 
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Puts every backend's home somewhere this test owns."""
-    for variable in (
-        "CLAUDE_CONFIG_DIR",
-        "CODEX_HOME",
-        "DSH_HOME",
-        "KIMI_CODE_HOME",
-    ):
-        monkeypatch.setenv(variable, str(tmp_path / variable.lower()))
-    return tmp_path
+    """Where every backend here logs, with `backends.named` answering for them."""
+    where = tmp_path / "logs"
+    where.mkdir()
+    known = {"claude", "codex", "dsh", "kimi", "mcode", "litellm"}
+
+    def named(backend: str) -> _Profile | None:
+        return _Profile(backend, where) if backend in known else None
+
+    monkeypatch.setattr(backends, "named", named)
+    return where
 
 
-def test_a_claude_turn_is_counted_while_it_is_still_being_written(home: Path) -> None:
-    """Read again as it grows, and never twice: a log is appended to, not replaced."""
-    log = home / "claude_config_dir" / "projects" / "-tmp-work" / "s1.jsonl"
-    _rows(log, _said("claude-opus-5", 300))
-    agent = ClaudeCodeAgent(ClaudeCodeAgentConfig(model="opus", effort="high"))
-    monitor = Monitor()
-    tally = Tally([_seen(agent, "s1")], monitor)
-
-    tally.read()
-
-    assert monitor.spent == {"claude-opus-5": 1302}  # named as the transcript names it
-
-    tally.read()  # nothing new written, so nothing counted again
-
-    assert monitor.spent == {"claude-opus-5": 1302}
-
-    _rows(
-        log, _said("claude-opus-5", 500)
-    )  # the turn goes on, still inside the same turn
-    tally.read()
-
-    assert monitor.spent == {"claude-opus-5": 2804}
+@pytest.fixture
+def told() -> _Told:
+    return _Told()
 
 
-def test_a_sub_agent_is_counted_as_the_model_it_ran_on(home: Path) -> None:
-    """A sub-agent writes a transcript of its own, and its tokens are the run's."""
-    projects = home / "claude_config_dir" / "projects" / "-tmp-work"
-    _rows(projects / "s1.jsonl", _said("claude-opus-5", 300))
-    _rows(
-        projects / "s1" / "subagents" / "agent-one.jsonl", _said("claude-haiku-4-5", 40)
-    )
-    agent = ClaudeCodeAgent(ClaudeCodeAgentConfig(model="opus", effort="high"))
-    monitor = Monitor()
-
-    Tally([_seen(agent, "s1")], monitor).read()
-
-    assert monitor.spent == {"claude-opus-5": 1302, "claude-haiku-4-5": 1042}
+def _tally(told: _Told, *sessions: Seen) -> Tally:
+    return Tally(list(sessions), cast("Monitor", told))
 
 
-def test_a_codex_thread_is_counted_from_the_rollout_it_writes(home: Path) -> None:
-    """`last_token_usage` is the request that just came back, and they add up to the thread."""
-    log = (
-        home
-        / "codex_home"
-        / "sessions"
-        / "2026"
-        / "08"
-        / "rollout-2026-08-06T07-14-14-t1.jsonl"
-    )
-    _rows(
-        log,
-        {
-            "type": "event_msg",
-            "payload": {
-                "type": "token_count",
-                "info": {
-                    "last_token_usage": {"input_tokens": 900, "total_tokens": 1000},
-                    "total_token_usage": {"total_tokens": 1000},
-                },
-            },
-        },
-    )
-    agent = CodexAgent(CodexAgentConfig(model="gpt-5.6-sol", effort="low"))
-    monitor = Monitor()
-    tally = Tally([_seen(agent, "t1")], monitor)
-
-    tally.read()
-
-    assert monitor.spent == {"gpt-5.6-sol": 1000}  # the model the agent runs at
-
-    _rows(
-        log,
-        {
-            "type": "event_msg",
-            "payload": {
-                "type": "token_count",
-                "info": {
-                    "last_token_usage": {"total_tokens": 500},
-                    "total_token_usage": {"total_tokens": 1500},
-                },
-            },
-        },
-    )
-    tally.read()
-
-    assert monitor.spent == {"gpt-5.6-sol": 1500}
+def _write(path: Path, *rows: object, partial: str = "") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as stream:
+        for row in rows:
+            stream.write((row if isinstance(row, str) else json.dumps(row)) + "\n")
+        stream.write(partial)
 
 
-def test_a_dsh_session_is_counted_from_its_assistant_messages(home: Path) -> None:
-    log = (
-        home
-        / "dsh_home"
-        / "sessions"
-        / "--tmp-work--"
-        / "session-d1"
-        / "session.v3.jsonl"
-    )
-    _rows(
-        log,
-        {
-            "type": "assistant/message",
-            "data": {
-                "message": {
-                    "source": {
-                        "kind": "model",
-                        "provider": "deepseek-official",
-                        "model": "deepseek-v4-pro",
-                    }
-                },
-                "usage": {
-                    "inputTokens": 11,
-                    "outputTokens": 7,
-                    "cacheReadTokens": 3,
-                    "cacheWriteTokens": 2,
-                    "reasoningTokens": 5,
-                },
-            },
-        },
-    )
-    agent = DshAgent(DshAgentConfig(model="deepseek-v4-flash", effort="high"))
-    monitor = Monitor()
-
-    Tally([_seen(agent, "session-d1")], monitor).read()
-
-    # The log names the actual model, and reasoning is already part of output.
-    assert monitor.spent == {"deepseek-v4-pro": 23}
-
-
-def test_a_kimi_session_is_counted_from_the_steps_its_daemon_writes(home: Path) -> None:
-    log = home / "kimi_code_home" / "server" / "events" / "session_k1.jsonl"
-    _rows(
-        log,
-        {
-            "kind": "event",
-            "envelope": {
-                "type": "turn.step.completed",
-                "payload": {
-                    "type": "turn.step.completed",
-                    "usage": {
-                        "inputOther": 2847,
-                        "output": 39,
-                        "inputCacheRead": 19200,
-                        "inputCacheCreation": 0,
-                    },
-                },
-            },
-        },
-    )
-    agent = KimiCodeCLIAgent(KimiCodeCLIAgentConfig(model="kimi-code/k3", effort="max"))
-    monitor = Monitor()
-
-    Tally([_seen(agent, "session_k1")], monitor).read()
-
-    assert monitor.spent == {"kimi-code/k3": 22086}
-
-
-def test_a_row_that_is_only_half_written_is_left_for_the_next_read(home: Path) -> None:
-    """A log is read while it is being written, so the last line of it may not be a line."""
-    log = home / "claude_config_dir" / "projects" / "-tmp-work" / "s1.jsonl"
-    _rows(log, _said("claude-opus-5", 300))
-    with log.open("a") as stream:
-        stream.write(
-            json.dumps(_said("claude-opus-5", 500))[:40]
-        )  # still being written
-    agent = ClaudeCodeAgent(ClaudeCodeAgentConfig(model="opus", effort="high"))
-    monitor = Monitor()
-    tally = Tally([_seen(agent, "s1")], monitor)
-
-    tally.read()
-
-    assert monitor.spent == {
-        "claude-opus-5": 1302
-    }  # the whole row, and only the whole row
-
-    with log.open("a") as stream:  # the rest of it lands
-        stream.write(json.dumps(_said("claude-opus-5", 500))[40:] + "\n")
-    tally.read()
-
-    assert monitor.spent == {"claude-opus-5": 2804}
-
-
-def test_a_session_with_no_log_to_read_is_left_to_its_backend(home: Path) -> None:
-    """An agent working on another machine keeps its log there, and says so itself."""
-    agent = ClaudeCodeAgent(ClaudeCodeAgentConfig(model="opus", effort="high"))
-    monitor = Monitor()
-
-    Tally([_seen(agent, "nowhere")], monitor).read()
-    monitor.spend(agent.id, 4000, model="opus")  # what the turn itself reported
-
-    assert monitor.spent == {"opus": 4000}
-
-
-def test_what_was_read_is_reported_kind_by_kind(home: Path) -> None:
-    """The count is a lump; the bill is not. Only the kinds can be put a price against."""
-    log = home / "claude_config_dir" / "projects" / "-tmp-work" / "s1.jsonl"
-    _rows(log, _said("claude-opus-5", 300))
-    agent = ClaudeCodeAgent(ClaudeCodeAgentConfig(model="opus", effort="high"))
-    monitor = Monitor()
-
-    Tally([_seen(agent, "s1")], monitor).read()
-
-    assert monitor.kinds[("read", "claude-opus-5")] == {
-        "input": 2,
-        "output": 300,
-        "cache_read": 1000,
-    }  # and no cache write, which this request did not make
-
-
-def test_a_log_that_says_only_a_total_is_counted_and_not_priced(home: Path) -> None:
-    """Codex's rollout may name a total and no kinds. That is tokens, and no bill."""
-    log = (
-        home
-        / "codex_home"
-        / "sessions"
-        / "2026"
-        / "08"
-        / "rollout-2026-08-06T07-14-14-t1.jsonl"
-    )
-    _rows(
-        log,
-        {
-            "type": "event_msg",
-            "payload": {
-                "type": "token_count",
-                "info": {"last_token_usage": {"total_tokens": 1000}},
-            },
-        },
-    )
-    agent = CodexAgent(CodexAgentConfig(model="gpt-5.6-sol", effort="low"))
-    monitor = Monitor()
-
-    Tally([_seen(agent, "t1")], monitor).read()
-
-    assert monitor.spent == {"gpt-5.6-sol": 1000}
-    # Counted under no kind at all, which is what cannot be priced -- rather than guessed
-    # at as input, which would be a bill nobody can stand behind.
-    assert monitor.kinds[("read", "gpt-5.6-sol")] == {"": 1000}
-    assert monitor.spending()[0].dollars is None
-
-
-def test_a_cached_read_codex_counted_inside_the_input_is_not_billed_twice(
-    home: Path,
-) -> None:
-    """Codex's `input_tokens` has the cached reads inside it, at a tenth of the price."""
-    log = (
-        home
-        / "codex_home"
-        / "sessions"
-        / "2026"
-        / "08"
-        / "rollout-2026-08-06T07-14-14-t1.jsonl"
-    )
-    _rows(
-        log,
-        {
-            "type": "event_msg",
-            "payload": {
-                "type": "token_count",
-                "info": {
-                    "last_token_usage": {
-                        "input_tokens": 900,
-                        "cached_input_tokens": 800,
-                        "output_tokens": 100,
-                        "total_tokens": 1000,
-                    }
-                },
-            },
-        },
-    )
-    agent = CodexAgent(CodexAgentConfig(model="gpt-5.6-sol", effort="low"))
-    monitor = Monitor()
-
-    Tally([_seen(agent, "t1")], monitor).read()
-
-    assert monitor.kinds[("read", "gpt-5.6-sol")] == {
-        "input": 100,
-        "cache_read": 800,
-        "output": 100,
-    }
-
-
-def test_a_prompt_that_was_wholly_cached_has_no_plain_input_rather_than_none_of_it(
-    home: Path,
-) -> None:
-    """Taking the cached reads back out can leave nothing, and nothing is not a kind."""
-    log = (
-        home
-        / "codex_home"
-        / "sessions"
-        / "2026"
-        / "08"
-        / "rollout-2026-08-06T07-14-14-t1.jsonl"
-    )
-    _rows(
-        log,
-        {
-            "type": "event_msg",
-            "payload": {
-                "type": "token_count",
-                "info": {
-                    "last_token_usage": {
-                        "input_tokens": 800,
-                        "cached_input_tokens": 800,
-                        "output_tokens": 100,
-                        "total_tokens": 900,
-                    }
-                },
-            },
-        },
-    )
-    agent = CodexAgent(CodexAgentConfig(model="gpt-5.6-sol", effort="low"))
-    monitor = Monitor()
-
-    Tally([_seen(agent, "t1")], monitor).read()
-
-    assert monitor.kinds[("read", "gpt-5.6-sol")] == {"cache_read": 800, "output": 100}
-
-
-def test_a_backend_reports_what_its_log_says_once_that_log_has_been_read(
-    home: Path,
-) -> None:
-    """Not before: a rollout written on another machine is one nothing here reads.
-
-    Codex's own server counts its cached reads inside the input and never names one, while
-    the rollout it writes does name them. So what the interface can show of a Codex run is
-    wider than what its driver reports -- but only where the rollout is in fact on this
-    machine, and a kind claimed off a log nobody read would be a nought drawn as a fact.
-    """
-    agent = CodexAgent(CodexAgentConfig(model="gpt-5.6-sol", effort="low"))
-    monitor = Monitor()
-    tally = Tally([_seen(agent, "t1")], monitor)
-
-    tally.read()  # nothing written yet, so nothing claimed
-
-    assert monitor.reports == {}
-
-    _rows(
-        home
-        / "codex_home"
-        / "sessions"
-        / "2026"
-        / "08"
-        / "rollout-2026-08-06T07-14-14-t1.jsonl",
-        {
-            "type": "event_msg",
-            "payload": {
-                "type": "token_count",
-                "info": {
-                    "last_token_usage": {
-                        "input_tokens": 900,
-                        "output_tokens": 40,
-                        "cached_input_tokens": 400,
-                        "total_tokens": 940,
-                    },
-                    "total_token_usage": {"total_tokens": 940},
-                },
-            },
-        },
-    )
-    tally.read()
-
-    # The driver's two, and the cached read only the rollout names.
-    assert monitor.reports[agent.id] == frozenset({"input", "output", "cache_read"})
-
-
-def _block(ident: str, kind: str, output: int) -> dict[str, object]:
-    """One block of a Claude message, written as a row of its own as Claude Code writes it.
-
-    Every block of one message is its own row under the one message id, and every one of them
-    carries the whole of the usage of the request that produced the message.
-    """
-    row = _said("claude-haiku-4-5", output)
-    message = row["message"]
-    assert isinstance(message, dict)
-    message["id"] = ident
-    message["content"] = [{"type": kind}]
+def _claude(
+    message: str | None,
+    usage: dict[str, int],
+    model: str = "opus",
+    at: str | None = None,
+) -> dict[str, Any]:
+    row: dict[str, Any] = {"message": {"id": message, "model": model, "usage": usage}}
+    if at is not None:
+        row["timestamp"] = at
     return row
 
 
-def _counted(total: int, last: int) -> dict[str, object]:
-    """One `token_count` of a Codex rollout: the request that just came back, and the thread."""
-    return {
-        "type": "event_msg",
-        "payload": {
-            "type": "token_count",
-            "info": {
-                "last_token_usage": {"output_tokens": last, "total_tokens": last},
-                "total_token_usage": {"output_tokens": total, "total_tokens": total},
+@pytest.mark.parametrize(
+    ("backend", "kinds"),
+    [
+        ("claude", {"input", "output", "cache_read", "cache_write"}),
+        ("codex", {"input", "output", "cache_read"}),
+        ("dsh", {"input", "output", "cache_read", "cache_write"}),
+        ("nobody", set[str]()),
+    ],
+)
+def test_reported_says_the_kinds_a_backend_log_holds(
+    backend: str, kinds: set[str]
+) -> None:
+    assert reported(backend) == kinds
+
+
+def test_a_session_whose_logs_are_not_there_tells_nothing(
+    home: Path, told: _Told
+) -> None:
+    tally = _tally(told, Seen("builder", "claude", "opus", idents=frozenset({"s1"})))
+
+    tally.read()
+
+    assert told.reports == {}
+    assert told.totals == {}
+
+
+def test_a_backend_nobody_knows_is_skipped(home: Path, told: _Told) -> None:
+    _write(home / "s1.jsonl", _claude("m1", {"input_tokens": 5}))
+    tally = _tally(told, Seen("x", "unknown", "m", idents=frozenset({"s1"})))
+
+    tally.read()
+
+    assert told.totals == {}
+
+
+def test_claude_spending_is_read_by_kind_and_said_as_read(
+    home: Path, told: _Told
+) -> None:
+    _write(
+        home / "s1.jsonl",
+        _claude(
+            "m1",
+            {
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "cache_read_input_tokens": 30,
+                "cache_creation_input_tokens": 40,
             },
-        },
-    }
-
-
-def test_a_claude_message_written_a_block_at_a_time_is_counted_once(
-    home: Path,
-) -> None:
-    """Its thinking, its words and its tool call are three rows of one request, not three."""
-    log = home / "claude_config_dir" / "projects" / "-tmp-work" / "s1.jsonl"
-    _rows(log, _block("msg_1", "thinking", 300), _block("msg_1", "text", 300))
-    agent = ClaudeCodeAgent(ClaudeCodeAgentConfig(model="haiku", effort="high"))
-    monitor = Monitor()
-    tally = Tally([_seen(agent, "s1")], monitor)
-
-    tally.read()
-
-    assert monitor.spent == {"claude-haiku-4-5": 1302}
-
-    # Its tool call lands on the next read, and is still the same request.
-    _rows(log, _block("msg_1", "tool_use", 300), _block("msg_2", "text", 40))
-    tally.read()
-
-    assert monitor.spent == {"claude-haiku-4-5": 1302 + 1042}
-    assert monitor.kinds[("read", "claude-haiku-4-5")] == {
-        "input": 4,
-        "output": 340,
-        "cache_read": 2000,
-    }
-
-
-def test_a_claude_message_carried_into_another_session_is_counted_once(
-    home: Path,
-) -> None:
-    """A session picked up under a new name writes the messages it carried over again."""
-    projects = home / "claude_config_dir" / "projects" / "-tmp-work"
-    _rows(projects / "s1.jsonl", _block("msg_1", "text", 300))
-    _rows(
-        projects / "s2.jsonl",
-        _block("msg_1", "text", 300),
-        _block("msg_2", "text", 40),
+        ),
+        {"type": "user"},
     )
-    agent = ClaudeCodeAgent(ClaudeCodeAgentConfig(model="haiku", effort="high"))
-    monitor = Monitor()
-
-    Tally([_seen(agent, "s1", "s2")], monitor).read()
-
-    assert monitor.spent == {"claude-haiku-4-5": 1302 + 1042}
-
-
-def test_a_codex_count_said_again_unmoved_is_counted_once(home: Path) -> None:
-    """Codex writes a `token_count` again where nothing was spent, the thread's total unmoved."""
-    log = (
-        home
-        / "codex_home"
-        / "sessions"
-        / "2026"
-        / "08"
-        / "rollout-2026-08-06T07-14-14-t1.jsonl"
+    tally = _tally(
+        told,
+        Seen(
+            "builder",
+            "claude",
+            "opus",
+            counts=frozenset({"reasoning"}),
+            idents=frozenset({"s1"}),
+        ),
     )
-    _rows(log, _counted(1000, 1000), _counted(1000, 1000), _counted(1500, 500))
-    agent = CodexAgent(CodexAgentConfig(model="gpt-5.6-sol", effort="low"))
-    monitor = Monitor()
-    tally = Tally([_seen(agent, "t1")], monitor)
 
     tally.read()
 
-    assert monitor.spent == {"gpt-5.6-sol": 1500}
-
-    _rows(log, _counted(1500, 500))  # said again on the next read, still unmoved
-    tally.read()
-
-    assert monitor.spent == {"gpt-5.6-sol": 1500}
-
-    # A thread cut back can come to a total it has come to before, over a request it has not
-    # made before: only the row just before is the one said again.
-    _rows(log, _counted(1000, 700))
-    tally.read()
-
-    assert monitor.spent == {"gpt-5.6-sol": 2200}
-
-
-def test_a_claude_row_naming_no_message_is_named_by_its_request(
-    home: Path,
-) -> None:
-    """A row with no message id is still one of a request, and its request says which."""
-    log = home / "claude_config_dir" / "projects" / "-tmp-work" / "s1.jsonl"
-    rows: list[dict[str, object]] = []
-    for kind in ("thinking", "text"):
-        row = _block("", kind, 300)
-        row["requestId"] = "req_1"
-        rows.append(row)
-    _rows(log, *rows)
-    agent = ClaudeCodeAgent(ClaudeCodeAgentConfig(model="haiku", effort="high"))
-    monitor = Monitor()
-
-    Tally([_seen(agent, "s1")], monitor).read()
-
-    assert monitor.spent == {"claude-haiku-4-5": 1302}
-
-
-def test_what_is_read_and_what_the_backend_said_come_to_the_same_bill(
-    home: Path,
-) -> None:
-    """The readout, an agent's box and its session's row are one count of the same tokens.
-
-    The log is read beside what the backend reports at the end of each request, and what was
-    spent is the higher of the two. A log counted a row at a time read as twice the run, and
-    the readout said twice what every box under it added up to.
-    """
-    log = home / "claude_config_dir" / "projects" / "-tmp-work" / "s1.jsonl"
-    _rows(
-        log,
-        _block("msg_1", "thinking", 300),
-        _block("msg_1", "text", 300),
-        _block("msg_2", "text", 40),
-        _block("msg_2", "tool_use", 40),
-    )
-    agent = ClaudeCodeAgent(ClaudeCodeAgentConfig(model="haiku", effort="high"))
-    monitor = Monitor()
-    monitor.begins(agent.id, "claude-haiku-4-5", session="coder/1")
-    for output in (300, 40):  # what the backend said of the same two requests
-        monitor.spend(
-            agent.id,
-            1002 + output,
-            model="claude-haiku-4-5",
-            kinds={"input": 2, "output": output, "cache_read": 1000},
-            session="coder/1",
+    assert told.sources == {"read"}
+    assert told.totals == {
+        "opus": (
+            100,
+            {"input": 10.0, "output": 20.0, "cache_read": 30.0, "cache_write": 40.0},
         )
-
-    Tally([_seen(agent, "s1")], monitor).read()
-
-    (spending,) = monitor.spending()
-    assert spending.tokens == 2344
-    assert sum(monitor.shape().used.values()) == 2344
-    assert sum(monitor.shape(sessions=True).used.values()) == 2344
-    assert sum(one.tokens for one in monitor.reckoning()) == 2344
+    }
+    assert told.reports == {"builder": reported("claude") | {"reasoning"}}
 
 
-#: When the run under test opened its session, and a moment either side of it: a row of the
-#: conversation it carried on, and a row of its own.
-OPENED = 1_790_000_000.0
-BEFORE, AFTER = OPENED - 3600, OPENED + 5
-
-
-def _iso(moment: float) -> str:
-    """A moment as Claude, Codex and Kimi write one: ISO 8601, in UTC, to the millisecond."""
-    from datetime import UTC, datetime
-
-    return (
-        datetime.fromtimestamp(moment, UTC).isoformat(timespec="milliseconds")[:-6]
-        + "Z"
-    )
-
-
-def _at(row: dict[str, object], moment: float) -> dict[str, object]:
-    """A row of a Claude transcript or a Codex rollout, written down at a moment."""
-    return {**row, "timestamp": _iso(moment)}
-
-
-def test_a_resumed_claude_session_counts_only_what_this_run_spent(
-    home: Path,
+def test_a_claude_message_said_on_several_rows_is_counted_once(
+    home: Path, told: _Told
 ) -> None:
-    """Its log has the turns an earlier run took in it, and those were that run's to pay."""
-    log = home / "claude_config_dir" / "projects" / "-tmp-work" / "s1.jsonl"
-    _rows(
-        log,
-        _at(_block("msg_old", "thinking", 300), BEFORE),
-        _at(_block("msg_old", "text", 300), BEFORE),
-        _at(_block("msg_new", "text", 40), AFTER),
-    )
-    agent = ClaudeCodeAgent(ClaudeCodeAgentConfig(model="haiku", effort="high"))
-    monitor = Monitor()
+    usage = {"input_tokens": 10, "output_tokens": 5}
+    _write(home / "s1.jsonl", _claude("m1", usage), _claude("m1", usage))
+    # A fork writes the conversation it was cut from again, under its own name.
+    _write(home / "s2.jsonl", _claude("m1", usage))
+    tally = _tally(told, Seen("a", "claude", "opus", idents=frozenset({"s1", "s2"})))
 
-    Tally([replace(_seen(agent, "s1"), since=OPENED)], monitor).read()
+    tally.read()
 
-    assert monitor.spent == {"claude-haiku-4-5": 1042}
+    assert told.totals["opus"][0] == 15
 
 
-def test_a_forked_claude_session_does_not_count_the_turns_it_was_cut_from(
-    home: Path,
+def test_a_claude_message_said_again_with_more_adds_only_the_more(
+    home: Path, told: _Told
 ) -> None:
-    """A fork writes its parent's messages out again, each at the time it was first written.
-
-    And the parent is no session of this run: it was an earlier run's, and the fork the
-    first this run opened.
-    """
-    log = home / "claude_config_dir" / "projects" / "-tmp-work" / "child.jsonl"
-    _rows(
-        log,
-        _at(_block("msg_parent", "text", 300), BEFORE),
-        _at(_block("msg_child", "text", 40), AFTER),
+    _write(
+        home / "s1.jsonl",
+        _claude("m1", {"output_tokens": 5}),
+        _claude("m1", {"output_tokens": 8}),
     )
-    agent = ClaudeCodeAgent(ClaudeCodeAgentConfig(model="haiku", effort="high"))
-    monitor = Monitor()
+    tally = _tally(told, Seen("a", "claude", "opus", idents=frozenset({"s1"})))
 
-    Tally([replace(_seen(agent, "child"), since=OPENED)], monitor).read()
+    tally.read()
 
-    assert monitor.spent == {"claude-haiku-4-5": 1042}
-
-
-def test_a_resumed_codex_thread_counts_only_what_this_run_spent(home: Path) -> None:
-    log = (
-        home
-        / "codex_home"
-        / "sessions"
-        / "2026"
-        / "08"
-        / "rollout-2026-08-06T07-14-14-t1.jsonl"
-    )
-    _rows(log, _at(_counted(1000, 1000), BEFORE), _at(_counted(1500, 500), AFTER))
-    agent = CodexAgent(CodexAgentConfig(model="gpt-5.6-sol", effort="low"))
-    monitor = Monitor()
-
-    Tally([replace(_seen(agent, "t1"), since=OPENED)], monitor).read()
-
-    assert monitor.spent == {"gpt-5.6-sol": 500}
+    assert told.totals["opus"] == (8, {"output": 8.0})
 
 
-def test_a_resumed_dsh_session_counts_only_what_this_run_spent(home: Path) -> None:
-    """Dsh writes its time down in milliseconds."""
-    log = (
-        home
-        / "dsh_home"
-        / "sessions"
-        / "--tmp-work--"
-        / "session-d1"
-        / "session.v3.jsonl"
-    )
-    _rows(
-        log,
-        *(
-            {
-                "type": "assistant/message",
-                "time": int(moment * 1000),
-                "data": {"message": {}, "usage": {"inputTokens": tokens}},
-            }
-            for moment, tokens in ((BEFORE, 1000), (AFTER, 30))
-        ),
-    )
-    agent = DshAgent(DshAgentConfig(model="deepseek-v4-flash", effort="high"))
-    monitor = Monitor()
-
-    Tally([replace(_seen(agent, "session-d1"), since=OPENED)], monitor).read()
-
-    assert monitor.spent == {"deepseek-v4-flash": 30}
-
-
-def test_a_resumed_kimi_session_counts_only_what_this_run_spent(home: Path) -> None:
-    """Kimi writes its time on the envelope of the event."""
-    log = home / "kimi_code_home" / "server" / "events" / "session_k1.jsonl"
-    _rows(
-        log,
-        *(
-            {
-                "kind": "event",
-                "envelope": {
-                    "type": "turn.step.completed",
-                    "timestamp": _iso(moment),
-                    "payload": {"usage": {"inputOther": tokens}},
-                },
-            }
-            for moment, tokens in ((BEFORE, 1000), (AFTER, 30))
-        ),
-    )
-    agent = KimiCodeCLIAgent(KimiCodeCLIAgentConfig(model="kimi-code/k3", effort="max"))
-    monitor = Monitor()
-
-    Tally([replace(_seen(agent, "session_k1"), since=OPENED)], monitor).read()
-
-    assert monitor.spent == {"kimi-code/k3": 30}
-
-
-def test_a_row_that_says_no_time_is_counted(home: Path) -> None:
-    """A row nobody can place is more likely this run's than not."""
-    log = home / "claude_config_dir" / "projects" / "-tmp-work" / "s1.jsonl"
-    _rows(log, _block("msg_1", "text", 300))
-    agent = ClaudeCodeAgent(ClaudeCodeAgentConfig(model="haiku", effort="high"))
-    monitor = Monitor()
-
-    Tally([replace(_seen(agent, "s1"), since=OPENED)], monitor).read()
-
-    assert monitor.spent == {"claude-haiku-4-5": 1302}
-
-
-def test_an_earlier_runs_last_codex_count_said_again_is_not_this_runs(
-    home: Path,
+def test_a_sub_agent_on_another_model_is_counted_as_itself(
+    home: Path, told: _Told
 ) -> None:
-    """Codex says the thread's last count again on picking it up, with the total unmoved."""
-    log = (
-        home
-        / "codex_home"
-        / "sessions"
-        / "2026"
-        / "08"
-        / "rollout-2026-08-06T07-14-14-t1.jsonl"
+    _write(
+        home / "s1.jsonl",
+        _claude("m1", {"output_tokens": 5}),
+        _claude("m2", {"output_tokens": 7}, model="haiku"),
+        _claude("m3", {"output_tokens": 1}, model=""),
     )
-    _rows(
-        log,
-        _at(_counted(1000, 1000), BEFORE),
-        _at(_counted(1000, 1000), AFTER),
-        _at(_counted(1500, 500), AFTER),
-    )
-    agent = CodexAgent(CodexAgentConfig(model="gpt-5.6-sol", effort="low"))
-    monitor = Monitor()
+    tally = _tally(told, Seen("a", "claude", "opus", idents=frozenset({"s1"})))
 
-    Tally([replace(_seen(agent, "t1"), since=OPENED)], monitor).read()
+    tally.read()
 
-    assert monitor.spent == {"gpt-5.6-sol": 500}
+    assert {model: total for model, (total, _) in told.totals.items()} == {
+        "opus": 6,
+        "haiku": 7,
+    }
 
 
-def test_an_earlier_runs_claude_message_written_again_is_not_this_runs(
-    home: Path,
+def test_only_what_was_appended_is_read_again_and_a_half_row_waits(
+    home: Path, told: _Told
 ) -> None:
-    """A message of the earlier run, said again as this one begins, is still that run's."""
-    log = home / "claude_config_dir" / "projects" / "-tmp-work" / "s1.jsonl"
-    _rows(
-        log,
-        _at(_block("msg_old", "text", 300), BEFORE),
-        _at(_block("msg_old", "tool_use", 300), AFTER),
-        _at(_block("msg_new", "text", 40), AFTER),
+    log = home / "s1.jsonl"
+    _write(log, _claude("m1", {"output_tokens": 5}), partial='{"message": {"id"')
+    tally = _tally(told, Seen("a", "claude", "opus", idents=frozenset({"s1"})))
+    tally.read()
+    assert told.totals["opus"][0] == 5
+
+    with log.open("a") as stream:
+        stream.write(': "m2", "usage": {"output_tokens": 3}}}\n')
+    tally.read()
+
+    assert told.totals["opus"][0] == 8
+
+
+def test_rows_that_are_not_rows_are_skipped(home: Path, told: _Told) -> None:
+    _write(
+        home / "s1.jsonl",
+        "not json",
+        "[1, 2]",
+        _claude("m1", {"output_tokens": 0}),
+        _claude("m2", {"output_tokens": 4}),
     )
-    agent = ClaudeCodeAgent(ClaudeCodeAgentConfig(model="haiku", effort="high"))
-    monitor = Monitor()
+    tally = _tally(told, Seen("a", "claude", "opus", idents=frozenset({"s1"})))
 
-    Tally([replace(_seen(agent, "s1"), since=OPENED)], monitor).read()
+    tally.read()
 
-    assert monitor.spent == {"claude-haiku-4-5": 1042}
+    assert told.totals == {"opus": (4, {"output": 4.0})}
 
 
 @pytest.mark.parametrize(
-    "said",
+    "at",
     [
-        pytest.param(10**400, id="a number past any float"),
-        pytest.param("9999-12-31T23:59:59.999+14:00", id="a date past any clock"),
-        pytest.param("yesterday", id="not a date"),
+        "2020-01-01T00:00:00Z",
+        "2020-01-01T00:00:00",
     ],
 )
-def test_a_row_whose_time_cannot_be_read_is_counted_and_reading_goes_on(
-    home: Path, said: object
+def test_rows_from_before_the_session_was_opened_are_not_this_runs(
+    home: Path, told: _Told, at: str
 ) -> None:
-    """A time nobody could have meant is no reason to stop reading the log."""
-    log = home / "claude_config_dir" / "projects" / "-tmp-work" / "s1.jsonl"
-    log.parent.mkdir(parents=True)
-    # Written out by hand, since no float holds the first of them for `json` to write.
-    row = json.dumps({**_block("msg_1", "text", 300), "timestamp": "@"})
-    log.write_text(row.replace('"@"', json.dumps(said)) + "\n")
-    agent = ClaudeCodeAgent(ClaudeCodeAgentConfig(model="haiku", effort="high"))
-    monitor = Monitor()
-
-    Tally([replace(_seen(agent, "s1"), since=OPENED)], monitor).read()
-
-    assert monitor.spent == {"claude-haiku-4-5": 1302}
-
-
-def test_a_time_that_names_no_zone_is_read_as_utc(home: Path) -> None:
-    """Which is what every one of these logs writes, whatever zone this machine is in."""
-    log = home / "claude_config_dir" / "projects" / "-tmp-work" / "s1.jsonl"
-    _rows(
-        log,
-        {**_block("msg_old", "text", 300), "timestamp": _iso(BEFORE)[:-1]},
-        {**_block("msg_new", "text", 40), "timestamp": _iso(AFTER)[:-1]},
+    _write(
+        home / "s1.jsonl",
+        _claude("old", {"output_tokens": 100}, at=at),
+        _claude("new", {"output_tokens": 7}, at="2030-01-01T00:00:00+00:00"),
+        _claude("unplaced", {"output_tokens": 1}, at="not a time"),
     )
-    agent = ClaudeCodeAgent(ClaudeCodeAgentConfig(model="haiku", effort="high"))
-    monitor = Monitor()
+    tally = _tally(
+        told,
+        Seen("a", "claude", "opus", idents=frozenset({"s1"}), since=1_700_000_000.0),
+    )
 
-    Tally([replace(_seen(agent, "s1"), since=OPENED)], monitor).read()
+    tally.read()
 
-    assert monitor.spent == {"claude-haiku-4-5": 1042}
+    assert told.totals["opus"][0] == 8
+
+
+def test_codex_takes_cached_reads_out_of_its_input(home: Path, told: _Told) -> None:
+    def counted(total: int, cached: int, inputs: int, out: int) -> dict[str, Any]:
+        return {
+            "payload": {
+                "info": {
+                    "last_token_usage": {
+                        "total_tokens": inputs + out,
+                        "input_tokens": inputs,
+                        "cached_input_tokens": cached,
+                        "output_tokens": out,
+                    },
+                    "total_token_usage": {"total_tokens": total},
+                }
+            }
+        }
+
+    _write(
+        home / "s1.jsonl",
+        counted(110, 60, 100, 10),
+        counted(110, 60, 100, 10),  # the same request, said again
+        counted(150, 30, 30, 10),  # wholly cached: no plain input left
+    )
+    tally = _tally(told, Seen("a", "codex", "gpt-5", idents=frozenset({"s1"})))
+
+    tally.read()
+
+    assert told.totals == {
+        "gpt-5": (150, {"input": 40.0, "cache_read": 90.0, "output": 20.0})
+    }
+
+
+def test_a_total_the_kinds_do_not_account_for_is_spent_under_no_kind(
+    home: Path, told: _Told
+) -> None:
+    _write(
+        home / "s1.jsonl",
+        {"payload": {"info": {"last_token_usage": {"total_tokens": 50}}}},
+    )
+    tally = _tally(told, Seen("a", "codex", "gpt-5", idents=frozenset({"s1"})))
+
+    tally.read()
+
+    assert told.totals == {"gpt-5": (50, {"": 50.0})}
+
+
+def test_dsh_reads_assistant_messages_alone(home: Path, told: _Told) -> None:
+    _write(
+        home / "s1.jsonl",
+        {
+            "type": "assistant/message",
+            "time": 1_900_000_000_000,
+            "data": {
+                "message": {"source": {"model": "deepseek-v3"}},
+                "usage": {"inputTokens": 3, "outputTokens": 4},
+            },
+        },
+        {"type": "user/message", "data": {"usage": {"inputTokens": 99}}},
+    )
+    tally = _tally(told, Seen("a", "dsh", "fallback", idents=frozenset({"s1"})))
+
+    tally.read()
+
+    assert told.totals == {"deepseek-v3": (7, {"input": 3.0, "output": 4.0})}
+
+
+@pytest.mark.parametrize("backend", ["mcode", "litellm"])
+def test_pi_shaped_logs_count_answers_against_provider_and_model(
+    home: Path, told: _Told, backend: str
+) -> None:
+    _write(
+        home / "s1.jsonl",
+        {
+            "message": {
+                "role": "assistant",
+                "provider": "minimax",
+                "model": "m2",
+                "usage": {"input": 2, "output": 3, "cacheRead": 4, "cache_read": 4},
+                "timestamp": 1_900_000_000,
+            }
+        },
+        {"message": {"role": "user", "usage": {"input": 50}}},
+    )
+    tally = _tally(told, Seen("a", backend, "fallback", idents=frozenset({"s1"})))
+
+    tally.read()
+
+    [(model, (total, kinds))] = told.totals.items()
+    assert model == "minimax/m2"
+    assert (kinds or {})["cache_read"] == 4.0
+    assert total == 9
+
+
+def test_kimi_reads_each_steps_usage(home: Path, told: _Told) -> None:
+    _write(
+        home / "s1.jsonl",
+        {
+            "envelope": {
+                "timestamp": "2030-01-01T00:00:00Z",
+                "payload": {"usage": {"inputOther": 6, "output": 2}},
+            }
+        },
+    )
+    tally = _tally(told, Seen("a", "kimi", "k2", idents=frozenset({"s1"})))
+
+    tally.read()
+
+    assert told.totals == {"k2": (8, {"input": 6.0, "output": 2.0})}
+
+
+def test_logs_under_a_runs_own_directory_and_every_pattern_are_read(
+    tmp_path: Path, home: Path, told: _Told
+) -> None:
+    kept = tmp_path / "kept"
+    _write(kept / "s1.jsonl", _claude("m1", {"output_tokens": 2}))
+    _write(kept / "sub" / "s1-agent.jsonl", _claude("m2", {"output_tokens": 3}))
+    tally = _tally(
+        told, Seen("a", "claude", "opus", idents=frozenset({"s1"}), kept=str(kept))
+    )
+
+    tally.read()
+
+    assert told.totals["opus"][0] == 5
+
+
+def test_a_session_added_later_is_read_too(home: Path, told: _Told) -> None:
+    _write(home / "s1.jsonl", _claude("m1", {"output_tokens": 2}))
+    tally = _tally(told)
+    tally.read()
+    assert told.totals == {}
+
+    tally.add(Seen("a", "claude", "opus", idents=frozenset({"s1"})))
+    tally.read()
+
+    assert told.totals["opus"][0] == 2
+
+
+def test_what_a_backend_reports_is_said_once(home: Path, told: _Told) -> None:
+    _write(home / "s1.jsonl", _claude("m1", {"output_tokens": 2}))
+    tally = _tally(told, Seen("a", "claude", "opus", idents=frozenset({"s1"})))
+    tally.read()
+    told.reports.clear()
+
+    tally.read()
+
+    assert told.reports == {}
+
+
+def test_watching_reads_until_stopped(home: Path, told: _Told) -> None:
+    _write(home / "s1.jsonl", _claude("m1", {"output_tokens": 2}))
+    tally = _tally(told, Seen("a", "claude", "opus", idents=frozenset({"s1"})))
+    tally.stops()  # stopped before it starts: it reads once on its way out
+
+    tally.watch()
+
+    assert told.landed.wait(5.0)
+    assert told.totals["opus"][0] == 2

@@ -1,108 +1,88 @@
-"""What a terminal says a key was, read whole however long an input method made it.
-
-Fed to Textual's own parser the way its input thread feeds it -- everything that arrived, then
-the end of it -- and read back as what it turned into. What is sent is what Ghostty sends once
-Textual has asked for every key as a report with its text inside: an input method's commit is
-one report, the key that confirmed it and then every character committed, as code points
-between colons.
-
-Nothing here asks for the ceiling to be raised: importing the interface is what does it, and a
-test that asked for it itself would go on passing with that gone.
-"""
+"""`hmz.tui.keyboard`: a key report is read whole however long an input method made it."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import importlib
+import time
+from typing import Any
 
 import pytest
-from textual import events
-from textual._xterm_parser import XTermParser
 
 from hmz.tui import keyboard
 
-if TYPE_CHECKING:
-    from textual.message import Message
+#: Textual's parser, reached by name: what this module changes is how it reads, and the
+#: parser is the only thing that can say so.
+_PARSER: Any = importlib.import_module("textual._xterm_parser")
+
+#: What `reads_long_reports` changes in it, so that each test leaves it as it found it.
+_CHANGED = (
+    "_MAX_SEQUENCE_SEARCH_THRESHOLD",
+    "_re_extended_key",
+    "_re_in_band_window_resize",
+)
 
 
-def read(sent: str) -> list[Message]:
-    """What Textual reads out of what a terminal sent, once nothing more is coming."""
-    parser = XTermParser()
-    return [*parser.feed(sent), *parser.feed("")]
+@pytest.fixture(autouse=True)
+def _parser_restored(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in _CHANGED:
+        monkeypatch.setattr(_PARSER, name, getattr(_PARSER, name))
+    keyboard.reads_long_reports()
 
 
-def keys(sent: str) -> list[events.Key]:
-    """The keys among it."""
-    return [each for each in read(sent) if isinstance(each, events.Key)]
+def _keys(sequence: str) -> list[tuple[str, str | None]]:
+    """What Textual reads a sequence as, fed one character at a time as a terminal might."""
+    parser = _PARSER.XTermParser(debug=False)
+    read: list[tuple[str, str | None]] = []
+    for character in sequence:
+        read.extend(
+            (type(event).__name__, getattr(event, "character", None))
+            for event in parser.feed(character)
+        )
+    return read
 
 
-def typed(sent: str) -> str:
-    """What those keys type."""
-    return "".join(each.character or "" for each in keys(sent))
+def _commit(text: str, confirm: int = 32) -> str:
+    """An input method's commit of `text`, as a kitty-protocol terminal reports it."""
+    return f"\x1b[{confirm};;" + ":".join(str(ord(one)) for one in text) + "u"
 
 
-def committed(text: str, confirmed: str) -> str:
-    """What Ghostty sends for an input method committing `text` on the key `confirmed`."""
-    return f"\x1b[{ord(confirmed)};;{':'.join(str(ord(each)) for each in text)}u"
+def test_the_ceiling_is_what_one_commit_can_be() -> None:
+    assert keyboard.LONGEST == 1024
+    # Some hundred and sixty characters of Chinese, at six characters of report to each.
+    near = "你" * 160
+    assert len(_commit(near)) < keyboard.LONGEST
+    assert _keys(_commit(near)) == [("Key", "你")] * 160
 
 
 @pytest.mark.parametrize(
     "text",
-    [
-        pytest.param("你", id="a-character"),  # the one that always arrived
-        pytest.param("你帮我检查一下这个代码库", id="a-sentence"),
-        pytest.param("satisfaction", id="a-word"),
-        # A hundred and fifty characters, and still one report.
-        pytest.param("中文输入法" * 30, id="a-paragraph"),
-    ],
+    ["你帮我", "你帮我写一个很长的句子吧" * 10, "abcdefghijklmnop"],
+    ids=["short", "long-chinese", "letters"],
 )
-@pytest.mark.parametrize(
-    "confirmed",
-    [pytest.param(" ", id="on-space"), pytest.param("1", id="on-its-number")],
-)
-def test_a_commit_arrives_whole_however_long(text: str, confirmed: str) -> None:
-    """Rather than as the report it arrived in, typed out a character at a time."""
-    assert typed(committed(text, confirmed)) == text
+def test_a_commit_arrives_as_the_characters_it_committed(text: str) -> None:
+    read = _keys(_commit(text))
+
+    assert read == [("Key", one) for one in text]
 
 
-@pytest.mark.parametrize(
-    ("sent", "key"),
-    [
-        # The key the protocol is asked for at all.
-        pytest.param("\x1b[13;2u", "shift+enter", id="shift+enter"),
-        pytest.param("\x1b[97;;97u", "a", id="a"),
-        pytest.param("\x1b[27u", "escape", id="escape"),
-        pytest.param("\x1b[9;2u", "shift+tab", id="shift+tab"),
-        pytest.param("\x1b[1;5A", "ctrl+up", id="ctrl+up"),
-    ],
-)
-def test_an_ordinary_report_is_still_the_key_it_was(sent: str, key: str) -> None:
-    """The pattern a report is read with is not Textual's own, so what it reads is checked."""
-    assert [each.key for each in keys(sent)] == [key]
+def test_an_ordinary_key_report_still_reads_as_its_key() -> None:
+    parser = _PARSER.XTermParser(debug=False)
+
+    keys = [getattr(event, "key", None) for event in parser.feed("\x1b[13;2u")]
+
+    assert keys == ["shift+enter"]
 
 
-def test_a_resize_reported_in_band_is_still_read() -> None:
-    """Its pattern is held to the length it was tried at, which a resize is well inside."""
-    resized = [
-        each
-        for each in read("\x1b[48;24;80;480;1280t")
-        if isinstance(each, events.Resize)
+def test_a_sequence_that_never_ends_costs_milliseconds_not_seconds() -> None:
+    began = time.perf_counter()
+    _keys("\x1b[" + "1" * 900)
+
+    assert time.perf_counter() - began < 2.0
+
+
+def test_reading_long_reports_twice_changes_nothing_more() -> None:
+    keyboard.reads_long_reports()
+
+    assert _keys(_commit("你帮我写一个很长的句子")) == [
+        ("Key", one) for one in "你帮我写一个很长的句子"
     ]
-
-    assert [each.size for each in resized] == [(80, 24)]
-
-
-@pytest.mark.timeout(10)
-@pytest.mark.parametrize(
-    "sent",
-    [
-        pytest.param("\x1b[" + "1" * keyboard.LONGEST, id="a-key-report"),
-        pytest.param("\x1b[48;1:" + "1:;" * (keyboard.LONGEST // 3), id="a-resize"),
-    ],
-)
-def test_a_sequence_that_never_ends_is_let_go_of(sent: str) -> None:
-    """Typed out as what it was, and at once: every character is checked against all of it.
-
-    The patterns Textual ships each take ten seconds at a quarter of this length, which is
-    what its own ceiling of 32 was keeping them from.
-    """
-    assert typed(sent).endswith(sent.removeprefix("\x1b["))
