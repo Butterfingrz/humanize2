@@ -8,8 +8,10 @@ again with the new prompt on the end.
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
+import litellm
 import pytest
 from pydantic import BaseModel
 
@@ -110,3 +112,26 @@ def test_an_endpoint_gone_silent_is_given_up_on_by_the_watchdog(
 
     with pytest.raises(Failed):
         LiteLLMAgent(CONFIG).new()("hang")
+
+
+@pytest.mark.timeout(30)
+def test_a_read_no_cut_can_free_is_given_up_on_all_the_same(
+    endpoint: Endpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A read that closing the answer does not wake, as a socket shut under it on macOS
+    # sometimes does not: the turn must end without waiting on it.
+    monkeypatch.setenv("HUMANIZE_WATCHDOG", "1")
+    released = threading.Event()
+
+    def stuck(**asked: object) -> Iterator[object]:
+        del asked
+        released.wait()
+        yield from ()
+
+    monkeypatch.setattr(litellm, "completion", stuck)
+
+    try:
+        with pytest.raises(Failed):
+            LiteLLMAgent(CONFIG).new()("hang")
+    finally:
+        released.set()
